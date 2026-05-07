@@ -186,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         project=WANDB_PROJECT,
         group=name,  # workers in the same study share this group
         job_type=f"stage{args.stage}",
+        dir=str(REPO_ROOT),  # write wandb/ at repo root, not CWD
         config={
             "bag": bag.stem,
             "stage": args.stage,

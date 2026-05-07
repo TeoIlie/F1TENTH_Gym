@@ -15,6 +15,11 @@
 
 set -euo pipefail
 
+# Anchor all relative paths (studies/, wandb/) to the repo root so the layout
+# is the same regardless of where the script was invoked from.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+cd "$REPO_ROOT"
+
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <bag.npz> <stage:1|2> [num_workers=4] [trials_per_worker=125] [base_params.yaml]"
     exit 1
