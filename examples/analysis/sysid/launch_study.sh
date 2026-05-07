@@ -62,11 +62,13 @@ echo "  workers:           $NUM_WORKERS"
 echo "  trials per worker: $TRIALS_PER_WORKER"
 echo "  total trials:      $TOTAL"
 echo "  study name:        $NAME"
-echo "  storage:           sqlite:///studies/${NAME}.db"
+echo "  storage:           studies/${NAME}.journal (Optuna JournalStorage)"
 echo "  wandb:             project f1tenth-sysid, group $NAME"
 [[ -n "$BASE_PARAMS" ]] && echo "  base params:       $BASE_PARAMS"
 echo "================================================================"
 
+# JournalStorage is race-free for concurrent workers — no DDL, no schema, no
+# alembic. Workers can spawn back-to-back against a fresh storage file.
 PIDS=()
 for ((i=1; i<=NUM_WORKERS; i++)); do
     LOG="studies/${NAME}_w${i}.log"
@@ -81,7 +83,7 @@ done
 
 echo "PIDs: ${PIDS[*]}"
 echo "Tail logs with:  tail -f studies/${NAME}_w*.log"
-echo "Check progress:  sqlite3 studies/${NAME}.db 'SELECT COUNT(*), MIN(value) FROM trials WHERE state=\"COMPLETE\";'"
+echo "Live progress available on wandb dashboard"
 echo "Waiting for workers..."
 
 wait

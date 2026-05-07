@@ -20,7 +20,7 @@ Rollout(env)                   # one GKEnv; set_params hot-swaps PAC2002 coeffic
 dataset_loss                   # weighted NMSE on {yaw_rate, v_y, a_x, v_x}
         │
         ▼
-Optuna study (CMA-ES, SQLite)  # 6-D Stage-1, 4-D Stage-2
+Optuna study (CMA-ES, JournalStorage)  # 6-D Stage-1, 4-D Stage-2
         │
         ▼
 f1tenth_std_optuna_stage{1,2}.yaml
@@ -52,7 +52,7 @@ f1tenth_std_optuna_stage{1,2}.yaml
 | Mirroring | On by default | Removes L/R bias; STD is structurally symmetric. |
 | Sampler | `CmaEsSampler(seed=...)` | 6-D continuous + parameter coupling — CMA-ES wheelhouse. |
 | Pruner | None (v1) | Pruning is a runtime optimization, not correctness. Add only if cost demands. |
-| Storage | `sqlite:///<repo>/studies/<name>.db` | File-based, multi-process safe via OS locking. |
+| Storage | `JournalStorage` at `<repo>/studies/<name>.journal` | Append-only log file, race-free for parallel workers (no DDL, no schema, no alembic). |
 | Resume | `load_if_exists=True` | Same study-name continues; new name = fresh study. |
 | Stage chaining | Via `base_params` | Stage 1 / 2 search spaces are disjoint — Stage 2 loads Stage 1 best YAML. |
 | NaN handling | Map to `inf` | Trial COMPLETE with infinite value, never FAIL. |
@@ -109,7 +109,7 @@ python -m examples.analysis.sysid.study \
     --base-params gymkhana/envs/params/f1tenth_std_optuna_stage1.yaml
 ```
 
-Auto-derived defaults: `--study-name` is `<bag_stem>_stage{N}`, `--storage` is `sqlite:///<repo>/studies/<study_name>.db`, `--out-yaml` is `gymkhana/envs/params/f1tenth_std_optuna_stage{N}.yaml`. Re-running the same name continues the existing study.
+Auto-derived defaults: `--study-name` is `<bag_stem>_stage{N}`, `--storage` is `<repo>/studies/<study_name>.journal` (path to the JournalStorage file), `--out-yaml` is `gymkhana/envs/params/f1tenth_std_optuna_stage{N}.yaml`. Re-running the same name continues the existing study.
 
 **Parallel workers** (CMA-ES degrades past ~4):
 
@@ -136,7 +136,7 @@ Outputs CSV + console ranking. The richer Phase-2 outputs (markdown report, plot
 ## Pre-launch verification
 
 1. `python -m pytest tests/sysid/ -q` — all green (~30 s).
-2. 5-trial smoke study — confirms plumbing, SQLite write, CLI completion.
+2. 5-trial smoke study — confirms plumbing, journal write, CLI completion.
 3. Optional: `study.enqueue_trial({k: midpoint(b.low, b.high) for k, b in STAGE1_SPACE.items()})` then run 1 trial; assert it matches a direct `dataset_loss` call (catches `apply_trial_params` / `set_params` no-ops). This is `test_enqueue_trial_matches_direct_rollout` in `test_study.py`.
 
 ## Phase-1 baseline (reference)

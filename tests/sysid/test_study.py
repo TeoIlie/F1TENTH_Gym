@@ -1,9 +1,10 @@
 """Tests for examples.analysis.sysid.study (Phase 3).
 
-Three smoke tests per the locked plan:
-  1. 2-trial study runs end-to-end on circle bag; SQLite persists.
-  2. NaN-trial maps to inf with state COMPLETE (not FAIL).
+Smoke tests:
+  1. 2-trial study runs end-to-end on circle bag; journal file persists.
+  2. Diverged trial maps to PRUNED state (not COMPLETE-with-inf).
   3. dump_best_params YAML round-trip preserves SYSID_PARAMS shape.
+  4. Enqueue equivalence: midpoint trial matches direct dataset_loss call.
 """
 
 from __future__ import annotations
@@ -45,14 +46,13 @@ def rollout():
 
 
 def test_study_smoke_runs_and_persists(tmp_path, dataset, rollout):
-    db_path = tmp_path / "smoke.db"
-    storage_url = f"sqlite:///{db_path.resolve()}"
-    study = build_study("smoke_test", storage_url, seed=42)
+    journal_path = tmp_path / "smoke.journal"
+    study = build_study("smoke_test", journal_path, seed=42)
 
     obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
     study.optimize(obj, n_trials=2)
 
-    assert db_path.exists() and db_path.stat().st_size > 0
+    assert journal_path.exists() and journal_path.stat().st_size > 0
     assert len(study.trials) == 2
     assert math.isfinite(study.best_value)
     # Sanity: with this small a budget, best_value won't necessarily beat
@@ -67,9 +67,8 @@ def test_diverged_trial_is_pruned(tmp_path, dataset, rollout):
     "AssertionError: Should not reach." The objective must instead raise
     optuna.TrialPruned on integrator divergence.
     """
-    db_path = tmp_path / "div.db"
-    storage_url = f"sqlite:///{db_path.resolve()}"
-    study = build_study("div_test", storage_url, seed=0)
+    journal_path = tmp_path / "div.journal"
+    study = build_study("div_test", journal_path, seed=0)
 
     obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
 
@@ -88,9 +87,8 @@ def test_diverged_trial_is_pruned(tmp_path, dataset, rollout):
 
 
 def test_dump_best_params_round_trip(tmp_path, dataset, rollout):
-    db_path = tmp_path / "dump.db"
-    storage_url = f"sqlite:///{db_path.resolve()}"
-    study = build_study("dump_test", storage_url, seed=7)
+    journal_path = tmp_path / "dump.journal"
+    study = build_study("dump_test", journal_path, seed=7)
 
     obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
     study.optimize(obj, n_trials=2)
@@ -138,9 +136,8 @@ def test_enqueue_trial_matches_direct_rollout(tmp_path, dataset, rollout):
     direct_loss, _ = dataset_loss(rollout.run, dataset)
 
     # Optuna path: enqueue same point, run one trial through Objective.
-    db_path = tmp_path / "enqueue.db"
-    storage_url = f"sqlite:///{db_path.resolve()}"
-    study = build_study("enqueue_test", storage_url, seed=0)
+    journal_path = tmp_path / "enqueue.journal"
+    study = build_study("enqueue_test", journal_path, seed=0)
     study.enqueue_trial(point)
     obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
     study.optimize(obj, n_trials=1)
