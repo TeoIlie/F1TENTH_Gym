@@ -87,7 +87,7 @@ class RenderSpec:
             try:
                 config = yaml.safe_load(yaml_stream)
             except yaml.YAMLError as ex:
-                print(ex)
+                raise ValueError(f"Failed to parse render config YAML at {yaml_file}: {ex}") from ex
         if overrides:
             config.update(overrides)
         return RenderSpec(**config)
