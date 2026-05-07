@@ -23,6 +23,7 @@ v_min: -5.0
 v_max: 20.0
 width: 0.31
 length: 0.58
+T_steer: 0.025  # Steering actuator time constant (s). 0 or omitted → bang-bang.
 
 # =========================
 # NEW PARAMS

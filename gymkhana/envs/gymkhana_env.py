@@ -174,7 +174,9 @@ class GKEnv(gym.Env):
         self.model = DynamicModel.from_string(self.config["model"])
         self.observation_config = self.config["observation_config"]
         self.normalize_act = self.config["normalize_act"]
-        self.action_type = CarAction(self.config["control_input"], params=self.params, normalize=self.normalize_act)
+        self.action_type = CarAction(
+            self.config["control_input"], params=self.params, normalize=self.normalize_act, timestep=self.timestep
+        )
         self.num_beams = self.config["num_beams"]
 
         # training mode
@@ -645,7 +647,10 @@ class GKEnv(gym.Env):
                 # if some parameters changed, recompute action space
                 self.normalize_act = self.config["normalize_act"]
                 self.action_type = CarAction(
-                    self.config["control_input"], params=self.params, normalize=self.normalize_act
+                    self.config["control_input"],
+                    params=self.params,
+                    normalize=self.normalize_act,
+                    timestep=self.timestep,
                 )
                 self.action_space = from_single_to_multi_action_space(self.action_type.space, self.num_agents)
 
