@@ -70,6 +70,8 @@ ipykernel = "^6.29.0"
 matplotlib = "^3.8.2"
 pre-commit = "^4.5.1"
 salib = "^1.5.2"
+optuna = "^4.8.0"
+cmaes = "^0.13.0"
 
 [tool.poetry.group.train.dependencies]
 wandb = "^0.17.0"
