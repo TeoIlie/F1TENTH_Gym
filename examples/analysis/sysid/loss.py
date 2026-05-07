@@ -7,7 +7,7 @@ trial's parameter dict, keeping this module independent of Optuna and the env.
 Sim signals are passed as `dict[str, np.ndarray]` keyed by CHANNELS (from
 dataset.py). Each array has shape (N+1,) matching Window.real_*.
 
-See docs/plan/OPTUNA_SYS_ID_LOSS.md for the locked design decisions.
+See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 """
 
 from __future__ import annotations

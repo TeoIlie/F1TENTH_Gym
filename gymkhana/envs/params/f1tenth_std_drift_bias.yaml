@@ -16,6 +16,7 @@ s_min: -0.5  # originally -0.4189
 s_max: 0.5  # originally 0.4189
 sv_min: -3.2
 sv_max: 3.2
+# T_steer: 0.025  # Steering actuator time constant (s). Uncomment to enable first-order lag (requires bench ID).
 v_switch: 7.319
 a_max: 7.0  # originally 9.51
 v_min: -5.0

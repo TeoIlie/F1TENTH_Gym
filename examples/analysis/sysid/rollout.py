@@ -5,7 +5,7 @@ Owns a single GKEnv instance configured for sim-vs-real replay and exposes a
 contract. Build once per worker; call `set_params(params)` between Optuna
 trials to hot-swap PAC2002 coefficients without rebuilding the env.
 
-See docs/plan/OPTUNA_SYS_ID_LOSS.md for the locked design decisions.
+See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 """
 
 from __future__ import annotations

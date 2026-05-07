@@ -9,7 +9,7 @@ This report consolidates the four passes run for Phase 2:
 
 1. Wide-δ orientation pass (`--wide-deltas`, ±90% .. +200%).
 2. Standard tire sweep (8 Stage-1/2 candidates, ±50% ladder).
-3. Vehicle-dyn sweep (`I_z`, `I_y_w`, `sv_max`, `sv_min`, `a_max`).
+3. Vehicle-dyn sweep (`I_z`, `I_y_w`, `sv_max`, `sv_min`, `a_max`). _Note: `T_steer` was added to `VEHICLE_DYN_CANDIDATES` after this report was written — see §9 for the follow-up plan._
 4. Frozen audit (8 frozen params, absolute mode, review-only).
 
 It locks the Stage-1 / Stage-2 search-space membership and bounds for Phase 3.
@@ -160,7 +160,30 @@ All 8 of: `tire_p_dx3`, `tire_p_dy3`, `tire_p_hy3`, `tire_p_vy3`, `tire_p_hx1`, 
 
 ---
 
-## 8. Exit criteria — status
+## 8. Follow-up — `T_steer` and `sv_*` reinterpretation
+
+### `T_steer` re-sweep — exclude from Stage 1
+
+Re-ran the vehicle-dyn pass with `T_steer` added to `VEHICLE_DYN_CANDIDATES`. Outputs in `figures/analysis/sysid/sensitivity/rosbag2_2026_05_04-17_54_17_100Hz/ranking_vehicle_dyn.md`.
+
+**Headline:** `T_steer` shows max |Δtotal| = **0.0000** across the entire ladder (`T_steer ∈ [0.0075, 0.075]` s, i.e. 200× variation around the YAML default of 0.025).
+
+**Caveat — the flat-zero is a propagation bug, not real insensitivity.** Empirical check: setting `T_steer ∈ {0.005, 1.0}` (200× difference) and replaying a single window produced bit-identical sim signals on all four channels. Root cause: `SteeringAngleAction.__init__` computes `self.k = (1 - exp(-dt/T_steer))/dt` *once* at construction; `env.configure({"params": ...})` rebuilds `self.action_type` on the env but the simulator's `RaceCar.action_type` still references the original handler. `RaceCar.update_params` only refreshes `self.params`, not `self.action_type`. Other identified params (`I_z`, `tire_p_*`) are read from `agent.params` each step inside the dynamics function and propagate correctly — `T_steer` is unique in being consumed only at action-handler init.
+
+**Decision: exclude `T_steer` from Stage 1.** Two reasons:
+
+1. The `set_params` plumbing bug means we cannot reliably identify `T_steer` via the current Optuna pipeline. Fixing it is filed as a deferred-upgrade in the OVERVIEW (low priority — affects no other Stage-1 param).
+2. Even with the bug fixed, the realistic upper bound on `T_steer` sensitivity is comparable to `sv_max` (Δ=1.7) or below — far below the Stage-1 promotion threshold (~18, set by `I_y_w`). The 0.2 s warmup-discard absorbs the steering-servo transient regardless of `T_steer`'s value, leaving little for Optuna to identify on this bag. A richer maneuver bag with rapid step-steers might surface it; this bag does not.
+
+**Action:** pin `T_steer = 0.025` (current YAML) as a hand-picked physical prior. `STAGE1_SPACE` stays at 6 params.
+
+### `sv_min` / `sv_max` reinterpretation (unchanged)
+
+The original §3 demotion of `sv_min` / `sv_max` still stands. The vehicle-dyn re-run confirms low sensitivity (max |Δ| = 1.7 / 3.0). The reason — bang-bang fallback bypassed by `T_steer > 0` mode — is mechanical, not informative about the bag's slew-rate excitation. Demotion holds.
+
+---
+
+## 9. Exit criteria — status
 
 - [x] Sweep CSV + ranking + coverage plots committed under `figures/analysis/sysid/sensitivity/rosbag2_2026_05_04-17_54_17_100Hz/`.
 - [x] This report written.

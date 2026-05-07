@@ -11,7 +11,7 @@ Each Window holds:
   - the command sequence to replay (cmd_steer, cmd_speed),
   - the real body-frame signals to score against (v_x, v_y, yaw_rate, a_x).
 
-See docs/plan/OPTUNA_SYS_ID_LOSS.md for the locked design decisions.
+See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 """
 
 from __future__ import annotations
