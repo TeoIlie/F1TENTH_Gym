@@ -59,13 +59,17 @@ def test_study_smoke_runs_and_persists(tmp_path, dataset, rollout):
     # the YAML default; we just need it to be a real number, not inf/nan.
 
 
-# ---------- NaN trial → inf, state COMPLETE ----------
+# ---------- diverged trial → state PRUNED (avoids Optuna's "Should not reach" assert) ----------
 
 
-def test_nan_trial_maps_to_inf(tmp_path, dataset, rollout):
-    db_path = tmp_path / "nan.db"
+def test_diverged_trial_is_pruned(tmp_path, dataset, rollout):
+    """Returning inf from the objective trips Optuna's CMA-ES sampler with
+    "AssertionError: Should not reach." The objective must instead raise
+    optuna.TrialPruned on integrator divergence.
+    """
+    db_path = tmp_path / "div.db"
     storage_url = f"sqlite:///{db_path.resolve()}"
-    study = build_study("nan_test", storage_url, seed=0)
+    study = build_study("div_test", storage_url, seed=0)
 
     obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
 
@@ -74,10 +78,10 @@ def test_nan_trial_maps_to_inf(tmp_path, dataset, rollout):
         study.optimize(obj, n_trials=1)
 
     trial = study.trials[0]
-    assert trial.state == optuna.trial.TrialState.COMPLETE, (
-        f"Expected COMPLETE (Objective swallows FloatingPointError), got {trial.state}"
+    assert trial.state == optuna.trial.TrialState.PRUNED, (
+        f"Expected PRUNED (objective raises TrialPruned on divergence), got {trial.state}"
     )
-    assert trial.value == math.inf
+    assert trial.value is None
 
 
 # ---------- dump_best_params round-trip ----------

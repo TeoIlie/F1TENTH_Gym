@@ -55,11 +55,15 @@ PHASE1_BASELINES: dict[str, float] = {
 class Objective:
     """Optuna objective: suggest, hot-swap params, score with dataset_loss.
 
-    Catches integrator divergence (FloatingPointError) and maps it to inf so
-    the trial records as COMPLETE rather than FAIL.
+    On integrator divergence (``FloatingPointError`` from ``Rollout.run``) the
+    trial is marked PRUNED via ``optuna.TrialPruned``. Returning ``inf`` from
+    the objective trips Optuna's CMA-ES sampler (cannot update covariance from
+    non-finite values) and was raising ``AssertionError: Should not reach.``
+    in ``_run_trial`` — pruning is the correct signal for a degenerate trial.
 
-    If `wandb_run` is provided, logs per-trial value + per-channel NMSE +
-    suggested params keyed by trial number.
+    If ``wandb_run`` is provided, logs per-trial value + per-channel NMSE +
+    suggested params keyed by trial number. Diverged trials log ``value=inf``
+    so they show up in the wandb chart, but Optuna records them as PRUNED.
     """
 
     def __init__(
@@ -84,20 +88,24 @@ class Objective:
             values[name] = trial.suggest_float(name, dist.low, dist.high, log=dist.log)
 
         self.rollout.set_params(apply_trial_params(self.base_params, values))
+        diverged = False
         try:
             total, per_channel = dataset_loss(self.rollout.run, self.dataset)
         except FloatingPointError:
+            diverged = True
             total = math.inf
             per_channel = {}
 
         if self.wandb_run is not None:
-            log_dict: dict = {"trial": trial.number, "value": total}
+            log_dict: dict = {"trial": trial.number, "value": total, "diverged": int(diverged)}
             for ch, v in per_channel.items():
                 log_dict[f"nmse/{ch}"] = v
             for k, v in values.items():
                 log_dict[f"param/{k}"] = v
             self.wandb_run.log(log_dict, step=trial.number)
 
+        if diverged:
+            raise optuna.TrialPruned("Integrator diverged on this parameter set.")
         return float(total)
 
 
