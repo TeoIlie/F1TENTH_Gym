@@ -3,7 +3,7 @@
 CLI::
 
     python -m examples.analysis.sysid.study \\
-        --bag <path> --stage {1,2} --n-trials 500 --seed 42 \\
+        --bag <path> --stage {1,2} --n-trials 500 \\
         [--base-params <yaml>]   # required for stage 2
 
 Re-running with the same study-name continues an existing study (Optuna's
@@ -26,6 +26,7 @@ import yaml
 from optuna.distributions import BaseDistribution, FloatDistribution
 from optuna.samplers import CmaEsSampler
 
+import wandb
 from examples.analysis.sysid.dataset import Dataset, load_dataset
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.loss import dataset_loss
@@ -35,21 +36,45 @@ from examples.analysis.sysid.search_spaces import STAGE_SPACES, apply_trial_para
 _LOG = logging.getLogger("sysid.study")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+# Fixed seed for reproducibility. Same seed across parallel workers is fine —
+# Optuna's storage assigns distinct trial numbers atomically, so each worker
+# steps the sampler from a different point.
+SEED = 42
+
+WANDB_PROJECT = "f1tenth-sysid"
+
+# Phase-1 baseline values (YAML defaults, no mirror) for known bags. Logged to
+# wandb config so the run is self-describing — gives a horizontal "what we're
+# trying to beat" reference. Unknown bags log None.
+PHASE1_BASELINES: dict[str, float] = {
+    "circle_Apr6_100Hz": 5.02,
+    "rosbag2_2026_05_04-17_54_17_100Hz": 27.4,
+}
+
 
 class Objective:
     """Optuna objective: suggest, hot-swap params, score with dataset_loss.
 
     Catches integrator divergence (FloatingPointError) and maps it to inf so
     the trial records as COMPLETE rather than FAIL.
+
+    If `wandb_run` is provided, logs per-trial value + per-channel NMSE +
+    suggested params keyed by trial number.
     """
 
     def __init__(
-        self, dataset: Dataset, rollout: Rollout, base_params: dict, space: dict[str, BaseDistribution]
+        self,
+        dataset: Dataset,
+        rollout: Rollout,
+        base_params: dict,
+        space: dict[str, BaseDistribution],
+        wandb_run=None,
     ) -> None:
         self.dataset = dataset
         self.rollout = rollout
         self.base_params = base_params
         self.space = space
+        self.wandb_run = wandb_run
 
     def __call__(self, trial: optuna.Trial) -> float:
         values: dict[str, float] = {}
@@ -60,9 +85,19 @@ class Objective:
 
         self.rollout.set_params(apply_trial_params(self.base_params, values))
         try:
-            total, _ = dataset_loss(self.rollout.run, self.dataset)
+            total, per_channel = dataset_loss(self.rollout.run, self.dataset)
         except FloatingPointError:
-            return math.inf
+            total = math.inf
+            per_channel = {}
+
+        if self.wandb_run is not None:
+            log_dict: dict = {"trial": trial.number, "value": total}
+            for ch, v in per_channel.items():
+                log_dict[f"nmse/{ch}"] = v
+            for k, v in values.items():
+                log_dict[f"param/{k}"] = v
+            self.wandb_run.log(log_dict, step=trial.number)
+
         return float(total)
 
 
@@ -102,7 +137,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--bag", required=True)
     p.add_argument("--stage", type=int, required=True, choices=(1, 2))
     p.add_argument("--n-trials", type=int, default=500)
-    p.add_argument("--seed", type=int, default=42)
     p.add_argument("--base-params", default=None, help="YAML to load (required for stage 2)")
     p.add_argument("--study-name", default=None, help="Default: <bag_stem>_stage{N}")
     p.add_argument("--storage", default=None, help="Default: sqlite:///<repo>/studies/<study_name>.db")
@@ -138,12 +172,28 @@ def main(argv: list[str] | None = None) -> int:
     dataset = load_dataset(str(bag))
     _LOG.info("Dataset: %d windows", len(dataset.windows))
     _LOG.info("Study: name=%s storage=%s", name, storage)
-    study = build_study(name, storage, args.seed)
+    study = build_study(name, storage, SEED)
 
-    with Rollout(params=base_params) as rollout:
-        objective = Objective(dataset, rollout, base_params, space)
-        _LOG.info("Running %d trials (stage=%d, |space|=%d, seed=%d)", args.n_trials, args.stage, len(space), args.seed)
+    wandb_init_kwargs = dict(
+        project=WANDB_PROJECT,
+        group=name,  # workers in the same study share this group
+        job_type=f"stage{args.stage}",
+        config={
+            "bag": bag.stem,
+            "stage": args.stage,
+            "n_trials": args.n_trials,
+            "seed": SEED,
+            "search_space": {k: [d.low, d.high] for k, d in space.items()},
+            "baseline_phase1": PHASE1_BASELINES.get(bag.stem),
+        },
+    )
+    with wandb.init(**wandb_init_kwargs) as wandb_run, Rollout(params=base_params) as rollout:
+        objective = Objective(dataset, rollout, base_params, space, wandb_run=wandb_run)
+        _LOG.info("Running %d trials (stage=%d, |space|=%d, seed=%d)", args.n_trials, args.stage, len(space), SEED)
         study.optimize(objective, n_trials=args.n_trials)
+        wandb_run.summary["best_value"] = study.best_value
+        wandb_run.summary["best_params"] = study.best_params
+        wandb_run.summary["n_trials_total"] = len(study.trials)
 
     timestamp = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
     header = (
@@ -151,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         f"# bag: {bag}\n"
         f"# stage: {args.stage}\n"
         f"# study: {name} ({storage})\n"
-        f"# seed: {args.seed}\n"
+        f"# seed: {SEED}\n"
         f"# n_trials: {len(study.trials)}\n"
         f"# best_value: {study.best_value}\n"
         f"# best_params: {study.best_params}\n\n"

@@ -100,12 +100,12 @@ If Stage 1's results show clean chassis correction and Stage 2 isn't needed (or 
 # Stage 1 (default base = SYSID_PARAMS)
 python -m examples.analysis.sysid.study \
     --bag examples/analysis/bags/<bag>.npz \
-    --stage 1 --n-trials 500 --seed 42
+    --stage 1 --n-trials 500
 
 # Stage 2 (uses Stage 1 best as base)
 python -m examples.analysis.sysid.study \
     --bag examples/analysis/bags/<bag>.npz \
-    --stage 2 --n-trials 500 --seed 42 \
+    --stage 2 --n-trials 500 \
     --base-params gymkhana/envs/params/f1tenth_std_optuna_stage1.yaml
 ```
 
@@ -117,9 +117,13 @@ Auto-derived defaults: `--study-name` is `<bag_stem>_stage{N}`, `--storage` is `
 mkdir -p studies
 for i in 1 2 3 4; do
   python -m examples.analysis.sysid.study --bag <path> --stage 1 \
-    --study-name myrun_stage1 --n-trials 125 --seed $((42+i)) &
+    --study-name myrun_stage1 --n-trials 125 &
 done; wait
 ```
+
+**Live monitoring via wandb** (always on):
+
+Every study run logs per-trial `value`, per-channel NMSE (`nmse/yaw_rate`, `nmse/v_y`, `nmse/a_x`, `nmse/v_x`), and suggested params (`param/I_z`, ...) to wandb project `f1tenth-sysid`. Each parallel worker is a separate wandb run grouped by study name; the wandb UI shows N colored lines per chart with min/mean aggregation. Wandb auth must be set up on the host (same as RL training).
 
 **Re-run sensitivity on a new bag:**
 
