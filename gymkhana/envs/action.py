@@ -201,12 +201,14 @@ class SteerAction:
 
 
 class SteeringAngleAction(SteerAction):
-    """Target steering angle action, converted to steering velocity via a bang-bang controller.
+    """Target steering angle action.
 
-    When normalized, maps ``[-1, 1]`` to ``[s_min, s_max]`` (guaranteed symmetric).
+    With ``params["T_steer"] > 0`` and a ``timestep``, applies an exact ZOH
+    first-order lag ``δ_dot = (δ_ref − δ)/T_steer``; otherwise falls back to
+    bang-bang. Normalized actions map ``[-1, 1]`` → ``[s_min, s_max]``.
     """
 
-    def __init__(self, params: Dict, normalize: bool) -> None:
+    def __init__(self, params: Dict, normalize: bool, timestep: float | None = None) -> None:
         super().__init__(normalize=normalize)
         self._type = "steering_angle"
 
@@ -219,6 +221,14 @@ class SteeringAngleAction(SteerAction):
             self.lower_limit = params["s_min"]
             self.upper_limit = params["s_max"]
             self.scale_factor = 1.0
+
+        T_steer = params.get("T_steer", 0.0)
+        if T_steer > 0.0 and timestep is not None and timestep > 0.0:
+            # Rate gain such that sv = k·(δ_ref − δ) reproduces the exact ZOH
+            # solution of δ_dot = (1/T_steer)(δ_ref − δ) over one sim step.
+            self.k = (1.0 - np.exp(-timestep / T_steer)) / timestep
+        else:
+            self.k = None
 
     def act(self, action: float, state: np.ndarray, params: Dict) -> float:
         """Return steering velocity for a desired steering angle.
@@ -233,11 +243,14 @@ class SteeringAngleAction(SteerAction):
         """
         desired_angle = action * self.scale_factor
 
-        sv = bang_bang_steer(
-            desired_angle,
-            state[2],
-            params["sv_max"],
-        )
+        if self.k is not None:
+            sv = self.k * (desired_angle - state[2])
+        else:
+            sv = bang_bang_steer(
+                desired_angle,
+                state[2],
+                params["sv_max"],
+            )
         return sv
 
 
@@ -324,7 +337,9 @@ class CarAction:
         normalize: Whether actions are normalized to ``[-1, 1]``.
     """
 
-    def __init__(self, control_mode: list[str, str], params: Dict, normalize: bool) -> None:
+    def __init__(
+        self, control_mode: str | list[str], params: Dict, normalize: bool, timestep: float | None = None
+    ) -> None:
         long_act_type_fn = None
         steer_act_type_fn = None
         if type(control_mode) == str:  # only one control mode specified
@@ -386,7 +401,10 @@ class CarAction:
 
         # Pass normalize parameter to action instances
         self._longitudinal_action: LongitudinalAction = long_act_type_fn(params, normalize=normalize)
-        self._steer_action: SteerAction = steer_act_type_fn(params, normalize=normalize)
+        if steer_act_type_fn is SteeringAngleAction:
+            self._steer_action: SteerAction = steer_act_type_fn(params, normalize=normalize, timestep=timestep)
+        else:
+            self._steer_action: SteerAction = steer_act_type_fn(params, normalize=normalize)
 
     def act(self, action: Any, **kwargs) -> Tuple[float, float]:
         """Convert a ``[steer, longitudinal]`` action pair into control commands.

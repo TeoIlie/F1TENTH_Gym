@@ -134,3 +134,23 @@ Reused utilities (no changes): `bang_bang_steer` (still used in fallback branch)
 3. **Visual inspection**: `python3 examples/drift_debug.py` (or equivalent) to visually confirm steering now feels less "snappy" on commanded step changes.
 4. **Step-response plot**: the new test module (or a quick script) can log δ(t) under a step command; plot vs. the analytic exponential and confirm overlap.
 5. **T_δ identification follow-up** (out-of-scope here but noted): the value `0.025 s` is a reasonable starting estimate derived from a 0→full-lock time of ~0.125 s under the "5·T ≈ settling" rule-of-thumb. A proper bench-ID should command a *small* step (not rate-saturated) and fit the exponential tail — this plan parameterizes the value so refining it later is a one-line YAML edit.
+
+## Future Work — Vicon Bench Identification of `sv_max` and `T_steer`
+
+A single 0→full-lock measurement cannot separate `sv_max` from `T_steer`: the trajectory is rate-saturated for most of the motion and only briefly exponential at the tail, so total settling time lies on a degenerate ridge of `(sv_max, T_steer)` combinations. Disentangling them requires either two excitations (small step + large step) or a richer signal (chirp, PRBS).
+
+**Proposed bench protocol** (chock the wheels, car stationary):
+
+1. **Direct δ measurement via wheel-mounted markers.** Place 3 mocap markers on the steered wheel face (rim or hub) — not on a stick: a 30 cm stick adds ~`(1/3)·m·L²` rotational inertia about the kingpin and can double or triple the assembly inertia, biasing `T_steer` upward. Markers on the wheel itself add negligible inertia. Compute δ from the angle between the wheel-face plane and the chassis-forward direction (use a chassis marker triplet for the reference frame). Mocap angular resolution from a ~10 cm marker baseline at 0.5 mm noise is ~5 mrad single-frame, ~1.5 mrad after light smoothing — comfortable for resolving a 0.05 rad step to a few percent.
+
+2. **Small step (fits `T_steer`).** Command `δ_ref: 0 → 0.05–0.10 rad`, hold 0.5 s, repeat 5–10×. Amplitude chosen so that `α·δ_ref/dt < sv_max` and the rate-clip never binds → response is pure exponential. Fit `T_steer` either from `t_63` (time to cross 63% of step) or by least-squares on `δ(t) = δ_ref(1 − exp(−(t − t_0)/T))`.
+
+3. **Large step (fits `sv_max`).** Command `0 → s_max`, identify the rate-saturated window where `|δ_ref − δ| > 0.5·s_max`, and fit a line through `δ(t)` in that window — the slope is `sv_max`. Take the median across repeats.
+
+4. **Dead-time as a free byproduct.** Cross-correlate logged `δ_ref(t)` against measured `δ(t)`; the lag at peak correlation is the transport delay. This lets the currently-hardcoded 2-step `steer_buffer` be calibrated rather than assumed.
+
+**Excitation cross-check.** A small-amplitude chirp (0.5–10 Hz, ~0.05 rad amplitude) gives the full Bode plot of the servo. The −3 dB corner is `1/(2π·T_steer)`; rolloff steeper than 20 dB/dec means the first-order model is inadequate (the servo has higher-order dynamics worth capturing).
+
+**Optuna's role.** With direct δ measurement, the steering parameters are identified by closed-form fits — no optimizer needed. Reserve Optuna for chassis/tire parameters and feed it the bench-derived `(sv_max, T_steer, dead_time)` as fixed values, otherwise it will explore the degenerate ridge with no information to resolve it.
+
+**Mocap requirements.** ≥ 200 Hz sampling (rise spans ~5 frames at `T = 0.025 s`, 200 Hz). Common timebase between controller-logged `δ_ref(t)` and mocap (NTP sync or hardware sync pulse) — clock skew of even 5 ms biases `T_steer` directly.

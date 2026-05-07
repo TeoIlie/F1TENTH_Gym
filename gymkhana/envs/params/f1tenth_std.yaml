@@ -22,6 +22,7 @@ R_w: 0.049  # effective tire radius [m] estimated by me to be 49 mm which is 0.0
 I_y_w: 0.0017  # wheel inertia in [kg m^2], approximated by me using I = 1/2 * m * r^2, where m = 107.5g and r = 50 mm - consider approximating more accurately with a trifilar pendulum experiment
 T_sb: 0.5  # torque split of brakes (percent of torque sent to front axle) [no units] - I'm assuming it's even front/back
 T_se: 0.5  # torque split of engine (percent of torque sent to front axle) [no units] - For AWD I'm assuming it's even front/back
+T_steer: 0.025  # Steering actuator time constant (s). 0 or omitted → bang-bang.
 
 # =========================
 # PAC2002 TIRE PARAMETERS

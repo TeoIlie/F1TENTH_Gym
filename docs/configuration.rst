@@ -76,6 +76,13 @@ Vehicle model and control
 
 For action space configuration (``control_input``, ``normalize_act``), see :doc:`api/action`.
 
+Steering actuator lag
+^^^^^^^^^^^^^^^^^^^^^
+
+Vehicle YAMLs may set ``T_steer`` (seconds) to enable an exact first-order lag on ``SteeringAngleAction`` instead of the default bang-bang controller. The action layer encodes ``δ̇ = (δ_ref − δ)/T_steer`` as a steering velocity that, when integrated by the dynamics model, exactly reproduces the closed-form ZOH solution. Cascades with the existing dead-time buffer and steering rate clip for a realistic dead-time + first-order-lag + rate-saturation servo model.
+
+Currently enabled only for the STD model (``f1tenth_std.yaml``, ``T_steer: 0.025``). Other YAMLs include a commented hint — uncomment after bench-identification. Omitting or setting ``T_steer: 0`` preserves the original bang-bang behaviour. See ``docs/plan/FIRST_ORDER_ACT_LAG.md`` for the derivation and the bench-ID protocol.
+
 Training mode
 -------------
 

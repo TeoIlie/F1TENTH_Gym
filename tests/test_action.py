@@ -4,6 +4,7 @@ Tests for CarAction __init__ parsing and order-independent control_input handlin
 
 import warnings
 
+import gymnasium as gym
 import numpy as np
 import pytest
 
@@ -14,6 +15,8 @@ from gymkhana.envs.action import (
     SteeringAngleAction,
     SteeringSpeedAction,
 )
+from gymkhana.envs.dynamic_models import bang_bang_steer
+from gymkhana.envs.gymkhana_env import GKEnv
 
 
 @pytest.fixture
@@ -334,3 +337,147 @@ class TestActIndexMapping:
 
         assert long_out == pytest.approx(accl_val)
         assert steer_out == pytest.approx(steer_val)
+
+
+# ============================================================================
+# First-order steering actuator lag in SteeringAngleAction
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def lagged_env():
+    """Shared GKEnv with first-order steering lag enabled (T_steer=0.025)."""
+    p = GKEnv.f1tenth_std_vehicle_params()
+    p["T_steer"] = 0.025
+    env = gym.make(
+        "gymkhana:gymkhana-v0",
+        config={
+            "map": "Spielberg",
+            "num_agents": 1,
+            "model": "std",
+            "observation_config": {"type": "drift"},
+            "params": p,
+            "normalize_act": True,
+            "normalize_obs": True,
+            "timestep": 0.01,
+        },
+    )
+    yield env
+    env.close()
+
+
+class TestSteeringAngleFirstOrderLag:
+    """Tests for the exact ZOH first-order lag in SteeringAngleAction.
+
+    Covers: bang-bang back-compat when T_steer is absent/zero, exact exponential
+    step response, time-to-63% identity, rate saturation cascading correctly into
+    the exponential tail, dt-independence in real time, and an end-to-end env
+    smoke test confirming monotone non-overshooting approach to s_max.
+    """
+
+    # --- Back-compat: bang-bang preserved -----------------------------------
+
+    @pytest.mark.parametrize(
+        "T_steer, timestep",
+        [
+            (None, None),  # T_steer absent, no timestep
+            (0.0, 0.01),  # T_steer explicitly zero
+            (0.025, None),  # T_steer set but no timestep supplied
+        ],
+    )
+    def test_falls_back_to_bang_bang(self, params, T_steer, timestep):
+        p = dict(params) if T_steer is None else dict(params, T_steer=T_steer)
+        sa = SteeringAngleAction(params=p, normalize=False, timestep=timestep)
+        assert sa.k is None
+
+        # Cover the three sign branches of bang_bang_steer (+, -, 0).
+        state = np.zeros(7)
+        for desired, current in [(0.4, 0.1), (-0.4, 0.1), (0.1, 0.1)]:
+            state[2] = current
+            assert sa.act(desired, state=state, params=p) == bang_bang_steer(desired, current, p["sv_max"])
+
+    # --- Exact exponential step response ------------------------------------
+
+    def test_step_response_matches_closed_form(self, params):
+        T, dt, delta_ref, N = 0.05, 0.01, 0.4, 50
+        p = dict(params, T_steer=T, sv_max=1e6)
+        sa = SteeringAngleAction(params=p, normalize=False, timestep=dt)
+        np.testing.assert_allclose(sa.k, (1.0 - np.exp(-dt / T)) / dt)
+
+        delta, traj = 0.0, [0.0]
+        state = np.zeros(7)
+        for _ in range(N):
+            state[2] = delta
+            delta += dt * sa.act(delta_ref, state=state, params=p)
+            traj.append(delta)
+
+        analytic = delta_ref * (1.0 - np.exp(-np.arange(N + 1) * dt / T))
+        np.testing.assert_allclose(traj, analytic, atol=1e-12, rtol=1e-12)
+
+    # --- Rate saturation cascading into exponential tail --------------------
+
+    def test_rate_clipped_then_exponential_tail(self, params):
+        T, dt, delta_ref, sv_max = 0.025, 0.01, 0.5, 3.2
+        p = dict(params, T_steer=T, sv_max=sv_max)
+        sa = SteeringAngleAction(params=p, normalize=False, timestep=dt)
+        alpha = 1.0 - np.exp(-dt / T)
+
+        # Step 0: large error → demand exceeds sv_max, clip binds.
+        state = np.zeros(7)
+        sv0 = sa.act(delta_ref, state=state, params=p)
+        assert sv0 > sv_max
+
+        # Roll forward with the rate clip until the demand drops below sv_max,
+        # then verify the next sample matches the exact exponential.
+        delta = 0.0
+        for _ in range(60):
+            state[2] = delta
+            sv_raw = sa.act(delta_ref, state=state, params=p)
+            if abs(sv_raw) < sv_max:
+                np.testing.assert_allclose(sv_raw, alpha * (delta_ref - delta) / dt, rtol=1e-12, atol=1e-12)
+                return
+            delta += dt * sv_max
+        pytest.fail("Rate clip never released within 60 steps")
+
+    # --- Dt-independence in real time ---------------------------------------
+
+    def test_dt_independent_real_time_trajectory(self, params):
+        T, delta_ref, total_t = 0.05, 0.4, 0.2
+        p = dict(params, T_steer=T, sv_max=1e6)
+        analytic = delta_ref * (1.0 - np.exp(-total_t / T))
+
+        for dt in (0.01, 0.005):
+            sa = SteeringAngleAction(params=p, normalize=False, timestep=dt)
+            delta = 0.0
+            state = np.zeros(7)
+            for _ in range(int(round(total_t / dt))):
+                state[2] = delta
+                delta += dt * sa.act(delta_ref, state=state, params=p)
+            np.testing.assert_allclose(delta, analytic, atol=1e-12, rtol=1e-12)
+
+    # --- End-to-end env step ------------------------------------------------
+
+    def test_monotonic_approach_to_s_max(self, lagged_env):
+        env = lagged_env
+        env.reset(seed=0)
+
+        s_max = env.unwrapped.params["s_max"]
+        # constant max-left steer, modest throttle
+        action = np.array([[1.0, 0.0]], dtype=np.float32)
+
+        deltas = []
+        N = 20  # 0.2 s
+        for _ in range(N):
+            _, _, term, trunc, _ = env.step(action)
+            delta = env.unwrapped.sim.agents[0].state[2]
+            deltas.append(delta)
+            if term or trunc:
+                break
+
+        deltas = np.asarray(deltas)
+        # Monotone non-decreasing (modulo tiny numerical noise)
+        diffs = np.diff(deltas)
+        assert np.all(diffs >= -1e-6)
+        # Approaching s_max, no overshoot
+        assert deltas[-1] <= s_max + 1e-6
+        assert deltas[-1] > 0.0
