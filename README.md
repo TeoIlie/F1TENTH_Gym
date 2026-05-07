@@ -143,7 +143,18 @@ python3 train/ppo_race.py --m x --path <ONNX model path>
 
 ### Default Gym/RL configurations
 
-Default configurations are stored in `/train/config/env_config.py`, with parameters coming from `train/config/rl_config.yaml` and `train/config/gym_config.yaml`. This exposes all necessary Gym env and RL params for training, as well as default functions for getting Gym configs of RL training and testing environments:
+For PyPI users (or anyone who wants a one-liner), the package exposes a `drift_config` preset bundling sensible STD-model drift defaults:
+
+```python
+import gymnasium as gym
+from gymkhana import drift_config
+
+env = gym.make("gymkhana:gymkhana-v0", config=drift_config(map="Drift"))
+```
+
+Keyword args override individual fields (`drift_config(num_agents=2, normalize_obs=False)`).
+
+For training workflows, full configurations are stored in `/train/config/env_config.py`, with parameters coming from `train/config/rl_config.yaml` and `train/config/gym_config.yaml`. This exposes all Gym env and RL params for training, plus convenience functions for getting Gym configs of RL training and testing environments (built on top of `drift_config` with training-specific keys layered on):
 
 1. `/train/config/env_config.py::get_drift_test_config()`
 2. `/train/config/env_config.py::get_drift_train_config()`
@@ -170,11 +181,12 @@ Note that CL is only supported for recovery training, with the environment `trai
 4. Set `"render_lookahead_curvatures": True` (it is `False` by default) to visualize lookahead curvature sampling points ahead of the vehicle in **yellow**. Optional parameters:
 5. Set `"debug_frenet_projection" = True` to visualize the Frenet coordinates are correct
 6. Set `"record_obs_min_max"` to `True/False` to record min/max observation values during training, and tweak normalization bounds if necessary, defined in `utils.py::calculate_norm_bounds`. Min/max are aggregated across parallelized environments and supported regardless of whether `normalize_obs` is enabled. When enabled during training, a YAML snapshot is written periodically to `outputs/config/<run_id>/obs_min_max.yaml`, and per-feature bounds-violation magnitudes (`obs_bounds/<feature>/over` and `.../under`) are streamed to wandb for live monitoring
-7. Set `"prevent_instability"` to `True/False` to enable post-RK4 sanity checks on the standardized state. When enabled, integrator blow-ups are detected, the agent's state is reverted, the episode is truncated, and the running event count is logged to wandb under `instability/total` and printed at end-of-run. The bounds are configurable via `"instability_yaw_rate_bound"` (default `4π` rad/s) and `"instability_slip_bound"` (default `π/2` rad). When disabled, the env behaves as before — no detection, no revert, no truncation
+7. Set `"render_config"` to a dict of field overrides for the packaged `gymkhana/envs/rendering/rendering.yaml` — e.g. `{"window_size": 1200, "render_type": "pygame", "show_ctr_debug": True}`. Omitted fields keep their yaml defaults. This is the preferred way to tweak rendering when `gymkhana` is installed from PyPI
+8. Set `"prevent_instability"` to `True/False` to enable post-RK4 sanity checks on the standardized state. When enabled, integrator blow-ups are detected, the agent's state is reverted, the episode is truncated, and the running event count is logged to wandb under `instability/total` and printed at end-of-run. The bounds are configurable via `"instability_yaw_rate_bound"` (default `4π` rad/s) and `"instability_slip_bound"` (default `π/2` rad). When disabled, the env behaves as before — no detection, no revert, no truncation
 
 #### Control debug panel
 
-Set `show_ctr_debug: True` in `gymkhana/envs/rendering/rendering.yaml` to enable a real-time control debug panel below the map (PyQt6 renderer only). The panel shows:
+Set `show_ctr_debug: True` via the `render_config` gym option (or in `gymkhana/envs/rendering/rendering.yaml` for repo users) to enable a real-time control debug panel below the map (PyQt6 renderer only). The panel shows:
 
 - **Actual vehicle state**: current steering angle (`delta`) and longitudinal velocity (`v_x`) in white
 - **Control commands**: raw steering and throttle commands with their bounds, colour-coded to match their bars (steering in blue, throttle in green)
@@ -184,7 +196,7 @@ The panel tracks the currently followed agent (switched via mouse click), defaul
 
 #### Observation debug overlay
 
-Set `show_obs_debug: True` in `gymkhana/envs/rendering/rendering.yaml` to overlay all observation values on top of the map in the top-left corner (PyQt6 renderer only). The overlay displays:
+Set `show_obs_debug: True` via the `render_config` gym option (or in `gymkhana/envs/rendering/rendering.yaml` for repo users) to overlay all observation values on top of the map in the top-left corner (PyQt6 renderer only). The overlay displays:
 
 - **Feature names and values**: each observation feature as a key-value pair (e.g., `linear_vel_x: 2.3451`)
 - **Array summaries**: large arrays like LiDAR scans show count, min, max, and mean; small arrays (e.g., lookahead curvatures) show all values

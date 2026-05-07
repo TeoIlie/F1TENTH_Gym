@@ -1,4 +1,5 @@
-# This file contains all parameters for the gym environment
+# This file contains training-specific gym parameters.
+# Additional defaults in public `gymkhana.drift_config` preset
 
 # =================================
 #   DEFAULT AND DRIFT/RACE CONFIG
@@ -7,12 +8,9 @@
 # Environment
 project_name: "f1tenth-ppo-drift"
 race_training_mode: "race"
-model: "std"  # Vehicle dynamics model: "std" or "mb" (multi-body)
-timestep: 0.01  # Simulation timestep in seconds
-num_agents: 1
-integrator: "rk4"  # Integration method: "rk4" or "euler"
-predictive_collision: false
-wall_deflection: false
+
+# LiDAR beams config - keep minimal for fast training, as it isn't needed
+num_beams: 2
 
 # Map
 map: "Drift"
@@ -27,22 +25,11 @@ track_pool:
 # For single-map training, set to null or comment out:
 # track_pool: null
 
-# Action
-action_input:
-  - "accl"
-  - "steering_angle"
-normalize_act: true
-
 # Observation
-obs_type: "drift"
-normalize_obs: true
 record_obs_min_max: true
-lookahead_n_points: 5
-lookahead_ds: 0.5  # Distance between lookahead points
 sparse_width_obs: true
 
 # Reset configuration
-reset_config: "cl_random_static"
 track_direction: "random"
 prevent_instability: true # enables integration instability checking with reset
 
@@ -53,9 +40,6 @@ train_debug_render: false
 # Callback config
 ckpt_save_freq: 10000 # reused for EvalCallback and custom CurriculumLearningCallback
 n_eval_episodes: 5
-
-# LiDAR beams config - keep minimal for fast training, as it isn't needed
-num_beams: 2
 
 # =================================
 #   RECOVERY MODE CONFIG

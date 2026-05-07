@@ -33,6 +33,30 @@ The ego agent index is 0.
 
 A working example is in ``examples/waypoint_follow.py``.
 
+Drifting in one line
+--------------------
+
+For an STD-model drift environment with sensible defaults, use the ``drift_config`` preset:
+
+.. code:: python
+
+   import gymnasium as gym
+   from gymkhana import drift_config
+
+   env = gym.make("gymkhana:gymkhana-v0", config=drift_config(map="Drift"), render_mode="human")
+   obs, info = env.reset()
+
+   for _ in range(1000):
+       action = env.action_space.sample()
+       obs, reward, terminated, truncated, info = env.step(action)
+       env.render()
+       if terminated or truncated:
+           obs, info = env.reset()
+
+   env.close()
+
+Pass keyword args to override individual fields (e.g. ``drift_config(map="Drift", num_agents=2)``). See :doc:`configuration` for the full list of preset defaults and override options.
+
 Simulation loop
 ---------------
 

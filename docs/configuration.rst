@@ -11,12 +11,51 @@ All configuration is passed through the ``config`` dictionary to ``gym.make()``.
 Default configurations
 ----------------------
 
-Default configurations for RL training and testing are in ``train/config/env_config.py``, with parameters loaded from:
+For PyPI users (or anyone who wants a one-liner starter config), the package exposes a ``drift_config`` preset bundling sensible STD-model drift defaults — physics (``model='std'``, ``integrator='rk4'``, ``timestep=0.01``), control (``control_input=['accl', 'steering_angle']``), observation (``observation_config={'type': 'drift'}``), normalization, lookahead sampling, Frenet boundary checking, and STD vehicle parameters.
+
+.. code:: python
+
+   import gymnasium as gym
+   from gymkhana import drift_config
+
+   # Defaults out of the box — pick a map and you have a working drift env.
+   env = gym.make("gymkhana:gymkhana-v0", config=drift_config(map="Drift"))
+   obs, info = env.reset()
+   action = env.action_space.sample()
+   obs, reward, terminated, truncated, info = env.step(action)
+   env.close()
+
+Keyword args override individual fields without touching the rest:
+
+.. code:: python
+
+   # Custom lookahead sampling, swap to drift-bias tyre params, enable wall deflection.
+   from gymkhana.envs.gymkhana_env import GKEnv
+
+   cfg = drift_config(
+       map="Drift",
+       lookahead_n_points=8,
+       lookahead_ds=0.4,
+       params=GKEnv.f1tenth_std_drift_bias_params(),
+       wall_deflection=True,
+   )
+   env = gym.make("gymkhana:gymkhana-v0", config=cfg)
+
+The preset is a plain ``dict``, so you can also spread it and add other keys (e.g. ``render_config`` from the rendering section below):
+
+.. code:: python
+
+   env = gym.make("gymkhana:gymkhana-v0", config={
+       **drift_config(map="Drift"),
+       "render_config": {"window_size": 1200, "show_obs_debug": True},
+   })
+
+For training workflows, full configurations live in ``train/config/env_config.py``, with parameters loaded from:
 
 - ``train/config/rl_config.yaml`` — RL hyperparameters (n_envs, learning rate, batch size, etc.)
 - ``train/config/gym_config.yaml`` — Gym environment parameters (map, model, timestep, etc.)
 
-Convenience functions return ready-made configs:
+Convenience functions return ready-made configs (built on top of ``drift_config`` with training-specific keys layered on):
 
 - ``get_drift_test_config()`` / ``get_drift_train_config()``
 - ``get_recovery_test_config()`` / ``get_recovery_train_config()``
@@ -144,10 +183,28 @@ Debugging and visualization
 
 Debug with breakpoints by looping through environment steps (see ``tests/drift_debug.py``).
 
+Rendering configuration
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Renderer fields (window size, render backend, debug panel toggles, vehicle palette, ...) are loaded from the packaged ``gymkhana/envs/rendering/rendering.yaml``. To override individual fields without editing the packaged file (essential for PyPI users), pass ``render_config`` in the ``gym.make`` config:
+
+.. code:: python
+
+   env = gym.make('gymkhana:gymkhana-v0', config={
+       'render_config': {
+           'window_size': 1200,
+           'render_type': 'pygame',     # 'pygame' or 'pyqt6'
+           'show_ctr_debug': True,
+           'show_obs_debug': True,
+       },
+   })
+
+Any field omitted from ``render_config`` keeps its packaged-yaml default.
+
 Control debug panel
 ^^^^^^^^^^^^^^^^^^^
 
-Set ``show_ctr_debug: True`` in ``gymkhana/envs/rendering/rendering.yaml`` to enable a real-time control debug panel below the map (PyQt6 renderer only). The panel displays:
+Set ``show_ctr_debug: True`` via ``render_config`` (or in ``gymkhana/envs/rendering/rendering.yaml`` for repo users) to enable a real-time control debug panel below the map (PyQt6 renderer only). The panel displays:
 
 - **Actual vehicle state** (white text): current steering angle (``delta``) and longitudinal velocity (``v_x``)
 - **Control commands** (colour-coded text): raw steering command in blue, throttle command in green, each with their bounds
@@ -158,7 +215,7 @@ The panel tracks whichever agent the camera is following (switched via mouse cli
 Observation debug overlay
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Set ``show_obs_debug: True`` in ``gymkhana/envs/rendering/rendering.yaml`` to overlay all observation values on top of the map in the top-left corner (PyQt6 renderer only). The overlay displays:
+Set ``show_obs_debug: True`` via ``render_config`` (or in ``gymkhana/envs/rendering/rendering.yaml`` for repo users) to overlay all observation values on top of the map in the top-left corner (PyQt6 renderer only). The overlay displays:
 
 - **Feature names and values**: each observation feature as a key-value pair (e.g., ``linear_vel_x: 2.3451``)
 - **Array summaries**: large arrays like LiDAR scans show count, min, max, and mean; small arrays (e.g., lookahead curvatures) show all values
