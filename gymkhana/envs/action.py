@@ -338,7 +338,7 @@ class CarAction:
     """
 
     def __init__(
-        self, control_mode: list[str, str], params: Dict, normalize: bool, timestep: float | None = None
+        self, control_mode: str | list[str], params: Dict, normalize: bool, timestep: float | None = None
     ) -> None:
         long_act_type_fn = None
         steer_act_type_fn = None
