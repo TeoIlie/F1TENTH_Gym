@@ -6,6 +6,7 @@ for this simulator. For the ref, see ``STDKinematics::update_pacejka`` (std_kine
 https://github.com/ForzaETH/f1tenth_simulator
 
 Deviations from the C++ original:
+
 - State uses ``(V, beta)`` instead of ``(v_x, v_y)``; body-frame derivatives are
   chain-ruled into ``(V_dot, beta_dot)``.
 - Returns derivatives only (gymkhana's RK4 integrates externally), so the
