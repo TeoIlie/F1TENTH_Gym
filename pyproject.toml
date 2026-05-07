@@ -31,6 +31,9 @@ documentation = "https://gym-khana.readthedocs.io/en/latest/"
 packages = [
     {include = "gymkhana"},
 ]
+include = [
+    {path = "gymkhana/**/*.yaml", format = ["sdist", "wheel"]},
+]
 
 classifiers = [
     "Programming Language :: Python :: 3.10",

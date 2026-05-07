@@ -438,6 +438,7 @@ class GKEnv(gym.Env):
             agent_ids=self.agent_ids,
             render_mode=render_mode,
             render_fps=self.metadata["render_fps"],
+            render_config=self.config.get("render_config"),
         )
 
         # automatically add track line rendering callback if configured
@@ -580,6 +581,7 @@ class GKEnv(gym.Env):
             "reset_config": {"type": None},
             "scale": 1.0,
             "num_beams": 1080,
+            "render_config": None,  # dict of overrides for rendering.yaml fields, or None to use packaged defaults
             "render_track_lines": False,
             "render_arc_length_annotations": False,
             "arc_length_annotation_interval": 2.0,

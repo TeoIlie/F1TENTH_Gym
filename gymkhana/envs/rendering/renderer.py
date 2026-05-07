@@ -67,14 +67,16 @@ class RenderSpec:
         self.render_type = render_type
 
     @staticmethod
-    def from_yaml(yaml_file: str | pathlib.Path):
+    def from_yaml(yaml_file: str | pathlib.Path, overrides: Optional[dict] = None):
         """
-        Load rendering specification from a yaml file.
+        Load rendering specification from a yaml file, optionally overriding fields.
 
         Parameters
         ----------
         yaml_file : str | pathlib.Path
             path to the yaml file
+        overrides : dict, optional
+            dict of field values that take precedence over the yaml contents
 
         Returns
         -------
@@ -85,7 +87,9 @@ class RenderSpec:
             try:
                 config = yaml.safe_load(yaml_stream)
             except yaml.YAMLError as ex:
-                print(ex)
+                raise ValueError(f"Failed to parse render config YAML at {yaml_file}: {ex}") from ex
+        if overrides:
+            config.update(overrides)
         return RenderSpec(**config)
 
 

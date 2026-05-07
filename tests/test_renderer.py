@@ -218,8 +218,8 @@ class TestRenderer(unittest.TestCase):
         """Test that the control debug panel renders without crashing in rgb_array mode."""
         original_from_yaml = RenderSpec.from_yaml
 
-        def from_yaml_with_debug(yaml_file):
-            spec = original_from_yaml(yaml_file)
+        def from_yaml_with_debug(yaml_file, overrides=None):
+            spec = original_from_yaml(yaml_file, overrides=overrides)
             spec.show_ctr_debug = True
             return spec
 
@@ -249,8 +249,8 @@ class TestRenderer(unittest.TestCase):
         """Test that debug data is not in render_obs when show_ctr_debug is False."""
         original_from_yaml = RenderSpec.from_yaml
 
-        def from_yaml_with_ctr_debug_off(yaml_file):
-            spec = original_from_yaml(yaml_file)
+        def from_yaml_with_ctr_debug_off(yaml_file, overrides=None):
+            spec = original_from_yaml(yaml_file, overrides=overrides)
             spec.show_ctr_debug = False
             return spec
 
@@ -273,8 +273,8 @@ class TestRenderer(unittest.TestCase):
         """Helper to create an env with show_obs_debug enabled and a given observation config."""
         original_from_yaml = RenderSpec.from_yaml
 
-        def from_yaml_with_obs_debug(yaml_file):
-            spec = original_from_yaml(yaml_file)
+        def from_yaml_with_obs_debug(yaml_file, overrides=None):
+            spec = original_from_yaml(yaml_file, overrides=overrides)
             spec.show_obs_debug = True
             return spec
 
@@ -401,12 +401,38 @@ class TestRenderer(unittest.TestCase):
 
         env.close()
 
+    # --- render_config override tests ---
+
+    def test_render_config_default(self):
+        """Without render_config, RenderSpec fields come from packaged rendering.yaml."""
+        env = self._make_env()
+        spec = env.unwrapped.render_spec
+        self.assertEqual(spec.window_size, 800)
+        self.assertEqual(spec.render_type, "pyqt6")
+        env.close()
+
+    def test_render_config_full_override(self):
+        """render_config overrides multiple fields at once."""
+        env = self._make_env(config={"render_config": {"window_size": 1234, "render_type": "pygame"}})
+        spec = env.unwrapped.render_spec
+        self.assertEqual(spec.window_size, 1234)
+        self.assertEqual(spec.render_type, "pygame")
+        env.close()
+
+    def test_render_config_partial_override(self):
+        """Fields not present in render_config keep their packaged-yaml defaults."""
+        env = self._make_env(config={"render_config": {"show_wheels": False}})
+        spec = env.unwrapped.render_spec
+        self.assertFalse(spec.show_wheels)
+        self.assertEqual(spec.window_size, 800)
+        env.close()
+
     def test_obs_debug_disabled(self):
         """Test that obs debug data is not in render_obs when show_obs_debug is False."""
         original_from_yaml = RenderSpec.from_yaml
 
-        def from_yaml_with_obs_debug_off(yaml_file):
-            spec = original_from_yaml(yaml_file)
+        def from_yaml_with_obs_debug_off(yaml_file, overrides=None):
+            spec = original_from_yaml(yaml_file, overrides=overrides)
             spec.show_obs_debug = False
             return spec
 
