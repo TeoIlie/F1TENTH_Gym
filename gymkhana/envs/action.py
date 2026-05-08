@@ -52,13 +52,14 @@ class LongitudinalAction:
     """Base class for longitudinal (speed/acceleration) actions.
 
     Subclasses implement :meth:`act` to convert a raw action value into an
-    acceleration command suitable for the dynamics model.
+    acceleration command suitable for the dynamics model. ``act()`` reads
+    scaling factors live from ``params`` each call, so ``GKEnv.configure``
+    param updates take effect without rebuilding the action.
 
     Attributes:
         normalize: Whether actions are normalized to ``[-1, 1]``.
         lower_limit: Lower bound of the action space.
         upper_limit: Upper bound of the action space.
-        scale_factor: Multiplier applied when denormalizing actions.
     """
 
     def __init__(self, normalize: bool) -> None:
@@ -66,7 +67,6 @@ class LongitudinalAction:
         self.normalize = normalize
         self.lower_limit = None
         self.upper_limit = None
-        self.scale_factor = 1.0
 
     @abstractmethod
     def act(self, longitudinal_action: Any, **kwargs) -> float:
@@ -96,11 +96,9 @@ class AcclAction(LongitudinalAction):
         if normalize:
             self.lower_limit = -1.0
             self.upper_limit = 1.0
-            self.scale_factor = params["a_max"]
         else:
             self.lower_limit = -params["a_max"]
             self.upper_limit = params["a_max"]
-            self.scale_factor = 1.0
 
     def act(self, action: float, state, params) -> float:
         """Return the acceleration command.
@@ -114,8 +112,10 @@ class AcclAction(LongitudinalAction):
             Acceleration in m/s^2.
         """
         # When normalize=True: maps [-1, 1] → [-a_max, a_max]
-        # When normalize=False: pass-through (scale_factor=1.0)
-        return action * self.scale_factor
+        if self.normalize:
+            return action * params["a_max"]
+        # When normalize=False: pass-through
+        return action
 
 
 class SpeedAction(LongitudinalAction):
@@ -131,9 +131,6 @@ class SpeedAction(LongitudinalAction):
         if normalize:
             self.lower_limit = -1.0
             self.upper_limit = 1.0
-            # Mapping: normalized * range + center
-            self.v_center = (params["v_max"] + params["v_min"]) / 2.0
-            self.v_range = (params["v_max"] - params["v_min"]) / 2.0
         else:
             self.lower_limit = params["v_min"]
             self.upper_limit = params["v_max"]
@@ -149,8 +146,12 @@ class SpeedAction(LongitudinalAction):
         Returns:
             Acceleration in m/s^2, computed by a proportional controller.
         """
+        # When normalize=True: maps: normalized * range + center
         if self.normalize:
-            desired_speed = action * self.v_range + self.v_center
+            v_center = (params["v_max"] + params["v_min"]) / 2.0
+            v_range = (params["v_max"] - params["v_min"]) / 2.0
+            desired_speed = action * v_range + v_center
+        # When normalize=False: pass-through
         else:
             desired_speed = action
 
@@ -169,13 +170,14 @@ class SteerAction:
     """Base class for steering actions.
 
     Subclasses implement :meth:`act` to convert a raw action value into a
-    steering velocity command suitable for the dynamics model.
+    steering velocity command suitable for the dynamics model. ``act()`` reads
+    scaling factors live from ``params`` each call, so ``GKEnv.configure``
+    param updates take effect without rebuilding the action.
 
     Attributes:
         normalize: Whether actions are normalized to ``[-1, 1]``.
         lower_limit: Lower bound of the action space.
         upper_limit: Upper bound of the action space.
-        scale_factor: Multiplier applied when denormalizing actions.
     """
 
     def __init__(self, normalize: bool) -> None:
@@ -183,7 +185,6 @@ class SteerAction:
         self.normalize = normalize
         self.lower_limit = None
         self.upper_limit = None
-        self.scale_factor = 1.0
 
     @abstractmethod
     def act(self, steer_action: Any, **kwargs) -> float:
@@ -215,20 +216,12 @@ class SteeringAngleAction(SteerAction):
         if normalize:
             self.lower_limit = -1.0
             self.upper_limit = 1.0
-            # Guaranteed symmetric: s_min = -s_max
-            self.scale_factor = params["s_max"]
         else:
             self.lower_limit = params["s_min"]
             self.upper_limit = params["s_max"]
-            self.scale_factor = 1.0
 
-        T_steer = params.get("T_steer", 0.0)
-        if T_steer > 0.0 and timestep is not None and timestep > 0.0:
-            # Rate gain such that sv = k·(δ_ref − δ) reproduces the exact ZOH
-            # solution of δ_dot = (1/T_steer)(δ_ref − δ) over one sim step.
-            self.k = (1.0 - np.exp(-timestep / T_steer)) / timestep
-        else:
-            self.k = None
+        # save timestep for act() call
+        self.timestep = timestep
 
     def act(self, action: float, state: np.ndarray, params: Dict) -> float:
         """Return steering velocity for a desired steering angle.
@@ -241,10 +234,19 @@ class SteeringAngleAction(SteerAction):
         Returns:
             Steering velocity in rad/s.
         """
-        desired_angle = action * self.scale_factor
+        # When normalize=True: maps [-1, 1] → [-s_max, s_max]
+        if self.normalize:
+            desired_angle = action * params["s_max"]
+        # When normalize=False: pass-through
+        else:
+            desired_angle = action
 
-        if self.k is not None:
-            sv = self.k * (desired_angle - state[2])
+        T_steer = params.get("T_steer", 0.0)
+        if T_steer > 0.0 and self.timestep is not None and self.timestep > 0.0:
+            # Rate gain such that sv = k·(δ_ref − δ) reproduces the exact ZOH
+            # solution of δ_dot = (1/T_steer)(δ_ref − δ) over one sim step.
+            k = (1.0 - np.exp(-self.timestep / T_steer)) / self.timestep
+            sv = k * (desired_angle - state[2])
         else:
             sv = bang_bang_steer(
                 desired_angle,
@@ -267,12 +269,9 @@ class SteeringSpeedAction(SteerAction):
         if normalize:
             self.lower_limit = -1.0
             self.upper_limit = 1.0
-            # Guaranteed symmetric: sv_min = -sv_max
-            self.scale_factor = params["sv_max"]
         else:
             self.lower_limit = params["sv_min"]
             self.upper_limit = params["sv_max"]
-            self.scale_factor = 1.0
 
     def act(self, action: float, state: np.ndarray, params: Dict) -> float:
         """Return the steering velocity command.
@@ -285,9 +284,11 @@ class SteeringSpeedAction(SteerAction):
         Returns:
             Steering velocity in rad/s.
         """
-        # When normalize=True: maps [-1, 1] → [sv_min, sv_max]
-        # When normalize=False: pass-through (scale_factor=1.0)
-        return action * self.scale_factor
+        # When normalize=True: maps [-1, 1] → [-sv_max, sv_max]
+        if self.normalize:
+            return action * params["sv_max"]
+        # When normalize=False: pass-through
+        return action
 
 
 class SteerActionEnum(Enum):

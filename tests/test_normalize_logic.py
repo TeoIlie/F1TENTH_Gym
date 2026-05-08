@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from gymkhana.envs.action import AcclAction, SpeedAction, SteeringAngleAction, SteeringSpeedAction
+from gymkhana.envs.dynamic_models import p_accl
 from gymkhana.envs.gymkhana_env import GKEnv
 from gymkhana.envs.utils import (
     GLOBAL_MAX_CURVATURE,
@@ -608,7 +609,6 @@ class TestNormalizedAction:
         # Check action space bounds
         assert accl_normalized.lower_limit == -1.0, "Normalized AcclAction lower limit should be -1.0"
         assert accl_normalized.upper_limit == 1.0, "Normalized AcclAction upper limit should be 1.0"
-        assert accl_normalized.scale_factor == a_max, f"Scale factor should be a_max={a_max}"
 
         # Test scaling: -1 → -a_max, 0 → 0, 1 → a_max
         assert np.isclose(accl_normalized.act(-1.0, dummy_state, params), -a_max), (
@@ -633,7 +633,6 @@ class TestNormalizedAction:
         # Check action space bounds (should be physical units)
         assert accl_unnormalized.lower_limit == -a_max, f"Unnormalized AcclAction lower limit should be -a_max={-a_max}"
         assert accl_unnormalized.upper_limit == a_max, f"Unnormalized AcclAction upper limit should be a_max={a_max}"
-        assert accl_unnormalized.scale_factor == 1.0, "Unnormalized scale factor should be 1.0"
 
         # Test passthrough: 5.0 → 5.0, -3.0 → -3.0
         assert np.isclose(accl_unnormalized.act(5.0, dummy_state, params), 5.0), "Expected passthrough 5.0"
@@ -648,8 +647,6 @@ class TestNormalizedAction:
         params["v_max"] = 7.0
         v_min = params["v_min"]
         v_max = params["v_max"]
-        v_center = 3.0  # (v_max + v_min) / 2.0
-        v_range = 4.0  # (v_max - v_min) / 2.0
 
         # Create state with current velocity = 0.0
         state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)  # state[3] = velocity
@@ -660,30 +657,18 @@ class TestNormalizedAction:
         # Check action space bounds
         assert speed_normalized.lower_limit == -1.0, "Normalized SpeedAction lower limit should be -1.0"
         assert speed_normalized.upper_limit == 1.0, "Normalized SpeedAction upper limit should be 1.0"
-        assert np.isclose(speed_normalized.v_center, v_center), f"v_center should be {v_center}"
-        assert np.isclose(speed_normalized.v_range, v_range), f"v_range should be {v_range}"
 
-        # Test scaling mapping (desired speed before P controller)
-        # -1 → v_min = -1.0
-        desired_speed_min = v_min  # -1.0 * v_range + v_center
-        assert np.isclose(desired_speed_min, v_min), f"Expected {v_min}, got {desired_speed_min}"
-
-        # 0 → v_center = 3.0
-        desired_speed_center = 3.0  # 0.0 * v_range + v_center
-        assert np.isclose(desired_speed_center, v_center), f"Expected {v_center}, got {desired_speed_center}"
-
-        # 1 → v_max = 7.0
-        desired_speed_max = v_max  # 1.0 * v_range + v_center
-        assert np.isclose(desired_speed_max, v_max), f"Expected {v_max}, got {desired_speed_max}"
-
-        # 0.5 → 5.0 (halfway between center and max: 3.0 + 0.5*4.0 = 5.0)
-        desired_speed_half = 5.0  # 0.5 * v_range + v_center
-        assert np.isclose(desired_speed_half, 5.0), f"Expected 5.0, got {desired_speed_half}"
-
-        # Test actual act() method (returns acceleration from P controller)
-        # We can't predict exact acceleration, but we verify act() runs without error
-        accl_result = speed_normalized.act(-1.0, state, params)
-        assert isinstance(accl_result, (float, np.floating)), "act() should return a float"
+        # Pin the [-1,1] → [v_min,v_max] mapping exactly by composing the
+        # expected desired_speed with p_accl and matching act() through it.
+        # This catches center/range drift that sign+monotonicity would miss.
+        v_center = (v_max + v_min) / 2.0
+        v_range = (v_max - v_min) / 2.0
+        for a in (-1.0, -0.5, 0.0, 0.5, 1.0):
+            expected_desired = a * v_range + v_center
+            expected_accl = p_accl(expected_desired, state[3], params["a_max"], v_max, v_min)
+            assert speed_normalized.act(a, state, params) == pytest.approx(expected_accl), (
+                f"action={a}: expected {expected_accl}, got {speed_normalized.act(a, state, params)}"
+            )
 
         # Test with normalize=False
         speed_unnormalized = SpeedAction(params, normalize=False)
@@ -711,18 +696,20 @@ class TestNormalizedAction:
         # Check action space bounds
         assert steering_normalized.lower_limit == -1.0, "Normalized SteeringAngleAction lower limit should be -1.0"
         assert steering_normalized.upper_limit == 1.0, "Normalized SteeringAngleAction upper limit should be 1.0"
-        assert np.isclose(steering_normalized.scale_factor, s_max), f"Scale factor should be s_max={s_max}"
 
-        # Test scaling: -1 → -s_max, 0 → 0, 1 → s_max
-        # The act() method returns steering velocity from bang_bang_steer, so we check the desired_angle internally
-        # We'll verify by checking the intermediate scaling works correctly
-        assert np.isclose(-1.0 * steering_normalized.scale_factor, s_min), f"Expected {s_min}"
-        assert np.isclose(0.0 * steering_normalized.scale_factor, 0.0), "Expected 0.0"
-        assert np.isclose(1.0 * steering_normalized.scale_factor, s_max), f"Expected {s_max}"
-
-        # Test act() method runs without error and returns steering velocity
-        sv_result = steering_normalized.act(-1.0, state, params)
-        assert isinstance(sv_result, (float, np.floating)), "act() should return a float (steering velocity)"
+        # Verify the [-1,1] → [s_min,s_max] mapping through act(). With
+        # T_steer not configured (timestep=None default) act() falls back to
+        # bang_bang_steer at sv_max, with sign matching (desired_angle - δ).
+        # At δ=0: action=-1 → desired=-s_max < 0 → sv = -sv_max; action=+1 →
+        # desired=+s_max > 0 → sv = +sv_max; action=0 → desired=0 → sv = 0.
+        sv_max = params["sv_max"]
+        assert np.isclose(steering_normalized.act(-1.0, state, params), -sv_max), (
+            "action=-1 should request steering velocity = -sv_max via bang-bang"
+        )
+        assert np.isclose(steering_normalized.act(0.0, state, params), 0.0), "action=0 at δ=0 should yield sv=0"
+        assert np.isclose(steering_normalized.act(1.0, state, params), sv_max), (
+            "action=+1 should request steering velocity = +sv_max via bang-bang"
+        )
 
         # Test with normalize=False
         steering_unnormalized = SteeringAngleAction(params, normalize=False)
@@ -734,7 +721,6 @@ class TestNormalizedAction:
         assert steering_unnormalized.upper_limit == s_max, (
             f"Unnormalized SteeringAngleAction upper limit should be {s_max}"
         )
-        assert steering_unnormalized.scale_factor == 1.0, "Unnormalized scale factor should be 1.0"
 
         # Test passthrough to bang_bang_steer
         sv_result_unnorm = steering_unnormalized.act(0.2, state, params)
@@ -757,7 +743,6 @@ class TestNormalizedAction:
             "Normalized SteeringSpeedAction lower limit should be -1.0"
         )
         assert steering_speed_normalized.upper_limit == 1.0, "Normalized SteeringSpeedAction upper limit should be 1.0"
-        assert np.isclose(steering_speed_normalized.scale_factor, sv_max), f"Scale factor should be sv_max={sv_max}"
 
         # Test scaling: -1 → -sv_max, 0 → 0, 1 → sv_max
         assert np.isclose(steering_speed_normalized.act(-1.0, dummy_state, params), -sv_max), f"Expected {-sv_max}"
@@ -778,7 +763,6 @@ class TestNormalizedAction:
         assert steering_speed_unnormalized.upper_limit == sv_max, (
             f"Unnormalized SteeringSpeedAction upper limit should be {sv_max}"
         )
-        assert steering_speed_unnormalized.scale_factor == 1.0, "Unnormalized scale factor should be 1.0"
 
         # Test passthrough: 2.0 → 2.0, -1.5 → -1.5
         assert np.isclose(steering_speed_unnormalized.act(2.0, dummy_state, params), 2.0), "Expected passthrough 2.0"
