@@ -7,6 +7,14 @@ trial's parameter dict, keeping this module independent of Optuna and the env.
 Sim signals are passed as `dict[str, np.ndarray]` keyed by CHANNELS (from
 dataset.py). Each array has shape (N+1,) matching Window.real_*.
 
+The per-channel loss is fixed-scale weighted MSE:
+
+    L = sum_c  CHANNEL_COEFFS[c] * mean((sim_c - real_c)**2)
+
+Each coefficient bundles "how much do I care about this channel" with a
+unit-scaling factor, so contributions land on comparable, unitless magnitudes
+without depending on per-dataset variance (which collapses on steady-state bags).
+
 See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 """
 
@@ -18,20 +26,26 @@ import numpy as np
 
 from examples.analysis.sysid.dataset import CHANNELS, Dataset, Window
 
-DEFAULT_WEIGHTS: dict[str, float] = {"yaw_rate": 3.0, "v_y": 2.0, "a_x": 1.0, "v_x": 0.5}
+# Per-channel coefficients combining importance and unit-scaling. Tuned so each
+# contribution lands on a comparable, unitless magnitude given typical drift-regime
+# signal scales (yaw_rate ~1 rad/s, v_y ~0.5 m/s, a_x ~5 m/s², v_x ~5 m/s).
+CHANNEL_COEFFS: dict[str, float] = {
+    "yaw_rate": 3.0,
+    "v_y": 8.0,
+    "a_x": 0.04,
+    "v_x": 0.02,
+    "omega": 0.005,
+}
 
-_VAR_EPS = 1e-9
 
-
-def channel_nmse(sim: np.ndarray, real: np.ndarray, variance: float) -> float:
-    return float(np.mean((sim - real) ** 2) / (variance + _VAR_EPS))
+def channel_loss(sim: np.ndarray, real: np.ndarray, coeff: float) -> float:
+    return coeff * float(np.mean((sim - real) ** 2))
 
 
 def window_loss(
     sim: dict[str, np.ndarray],
     window: Window,
-    variances: dict[str, float],
-    weights: dict[str, float],
+    coeffs: dict[str, float],
     warmup_steps: int,
 ) -> tuple[float, dict[str, float]]:
     per_channel: dict[str, float] = {}
@@ -42,16 +56,16 @@ def window_loss(
         assert sim_full.shape == real_full.shape, (
             f"sim[{ch!r}] shape {sim_full.shape} does not match real shape {real_full.shape}"
         )
-        nmse = channel_nmse(sim_full[warmup_steps:], real_full[warmup_steps:], variances[ch])
-        per_channel[ch] = nmse
-        weighted_total += weights[ch] * nmse
+        contrib = channel_loss(sim_full[warmup_steps:], real_full[warmup_steps:], coeffs[ch])
+        per_channel[ch] = contrib
+        weighted_total += contrib
     return weighted_total, per_channel
 
 
 def dataset_loss(
     rollout_fn: Callable[[Window], dict[str, np.ndarray]],
     dataset: Dataset,
-    weights: dict[str, float] = DEFAULT_WEIGHTS,
+    coeffs: dict[str, float] = CHANNEL_COEFFS,
     warmup_s: float = 0.2,
 ) -> tuple[float, dict[str, float]]:
     warmup_steps = int(round(warmup_s / dataset.dt))
@@ -67,7 +81,7 @@ def dataset_loss(
 
     for window in dataset.windows:
         sim = rollout_fn(window)
-        total, per_channel = window_loss(sim, window, dataset.variances, weights, warmup_steps)
+        total, per_channel = window_loss(sim, window, coeffs, warmup_steps)
         totals.append(total)
         for ch in CHANNELS:
             per_channel_accum[ch].append(per_channel[ch])

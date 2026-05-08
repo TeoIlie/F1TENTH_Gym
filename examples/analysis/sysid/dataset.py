@@ -23,7 +23,7 @@ from scipy.signal import savgol_filter
 
 from examples.analysis.sysid.env import SYSID_PARAMS
 
-CHANNELS = ("yaw_rate", "v_y", "a_x", "v_x")
+CHANNELS = ("yaw_rate", "v_y", "a_x", "v_x", "omega")
 
 # init_state layout (9-wide, matches STD's `user_state_lens()` 9-branch):
 #   [x, y, delta, v, yaw, yaw_rate, beta, omega_front, omega_rear]
@@ -44,13 +44,13 @@ class Window:
     real_v_y: np.ndarray
     real_yaw_rate: np.ndarray
     real_a_x: np.ndarray
+    real_omega: np.ndarray  # VESC rs_core_speed/R_w over the window (rad/s)
     is_mirrored: bool
 
 
 @dataclass(frozen=True)
 class Dataset:
     windows: list[Window]
-    variances: dict[str, float]
     dt: float
 
 
@@ -64,6 +64,7 @@ def mirror_window(w: Window) -> Window:
         real_v_y=-w.real_v_y,
         real_yaw_rate=-w.real_yaw_rate,
         real_a_x=w.real_a_x.copy(),
+        real_omega=w.real_omega.copy(),  # wheel speeds are sign-symmetric under L/R mirror
         is_mirrored=not w.is_mirrored,
     )
 
@@ -120,11 +121,11 @@ def load_dataset(
         rvy = vicon_body_vy[t0 : end + 1]
         rr = vicon_r[t0 : end + 1]
         rax = real_a_x_full[t0 : end + 1]
-        omega0 = omega_full[t0]  # scalar — only t0 sample feeds init_state[7:9]
+        romega = omega_full[t0 : end + 1]  # romega[0] seeds init_state[7:9] (AWD); full slice is scored.
 
         if np.mean(speed_full[t0 : end + 1]) < min_speed:
             continue
-        if not all(np.all(np.isfinite(a)) for a in (rvx, rvy, rr, rax, cmd_s, cmd_v, omega0)):
+        if not all(np.all(np.isfinite(a)) for a in (rvx, rvy, rr, rax, romega, cmd_s, cmd_v)):
             continue
 
         init_state = np.array(
@@ -136,8 +137,8 @@ def load_dataset(
                 vicon_yaw[t0],
                 vicon_r[t0],
                 beta_full[t0],
-                omega0,
-                omega0,
+                romega[0],
+                romega[0],
             ],
             dtype=float,
         )
@@ -152,6 +153,7 @@ def load_dataset(
                 real_v_y=rvy.astype(float),
                 real_yaw_rate=rr.astype(float),
                 real_a_x=rax.astype(float),
+                real_omega=romega.astype(float),
                 is_mirrored=False,
             )
         )
@@ -159,20 +161,10 @@ def load_dataset(
     if not windows:
         raise ValueError(f"No windows survived filtering for {npz_path}")
 
-    # Variances computed from the physical (non-mirrored) signals so the NMSE scale
-    # does not depend on whether mirroring is enabled. Mirrored windows are scored
-    # against the same per-channel scale.
-    variances = {
-        "yaw_rate": float(np.var(np.concatenate([w.real_yaw_rate for w in windows]))),
-        "v_y": float(np.var(np.concatenate([w.real_v_y for w in windows]))),
-        "a_x": float(np.var(np.concatenate([w.real_a_x for w in windows]))),
-        "v_x": float(np.var(np.concatenate([w.real_v_x for w in windows]))),
-    }
-
     if mirror:
         windows = windows + [mirror_window(w) for w in windows]
 
-    return Dataset(windows=windows, variances=variances, dt=dt)
+    return Dataset(windows=windows, dt=dt)
 
 
 def _plot_dataset_overview(dataset: Dataset, npz_path: str, out_path: str, mirror: bool = False) -> None:
@@ -347,7 +339,6 @@ if __name__ == "__main__":
 
     n_orig = sum(not w.is_mirrored for w in ds.windows)
     print(f"windows: {len(ds.windows)} total ({n_orig} originals + {len(ds.windows) - n_orig} mirrors)")
-    print(f"variances: {ds.variances}")
 
     stem = Path(args.path).stem
     out_dir = os.path.join("figures", "analysis", "sysid", stem)

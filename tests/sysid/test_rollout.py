@@ -181,6 +181,7 @@ def test_mirror_invariant_under_default_params(rollout):
         real_v_y=np.zeros(n + 1),
         real_yaw_rate=np.zeros(n + 1),
         real_a_x=np.zeros(n + 1),
+        real_omega=np.zeros(n + 1),
         is_mirrored=False,
     )
     w_mirr = mirror_window(w)
@@ -199,6 +200,7 @@ def test_mirror_invariant_under_default_params(rollout):
     np.testing.assert_allclose(sim_m["v_y"], -sim["v_y"], **tol)
     np.testing.assert_allclose(sim_m["yaw_rate"], -sim["yaw_rate"], **tol)
     np.testing.assert_allclose(sim_m["a_x"], sim["a_x"], **tol_ax)
+    np.testing.assert_allclose(sim_m["omega"], sim["omega"], **tol)
 
 
 # ---------- NaN/inf guard ----------

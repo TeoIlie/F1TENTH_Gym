@@ -14,7 +14,6 @@ import pytest
 from scipy.signal import savgol_filter
 
 from examples.analysis.sysid.dataset import (
-    CHANNELS,
     load_dataset,
     mirror_window,
 )
@@ -102,6 +101,7 @@ def test_window_shapes(straight_npz):
         assert w.real_v_y.shape == (N_STEPS + 1,)
         assert w.real_yaw_rate.shape == (N_STEPS + 1,)
         assert w.real_a_x.shape == (N_STEPS + 1,)
+        assert w.real_omega.shape == (N_STEPS + 1,)
         assert w.init_state.shape == (9,)
 
 
@@ -135,6 +135,7 @@ def test_real_signals_match_bag_slice(asymmetric_npz):
         np.testing.assert_allclose(w.real_v_x, data["vicon_body_vx"][i : i + N_STEPS + 1])
         np.testing.assert_allclose(w.real_v_y, data["vicon_body_vy"][i : i + N_STEPS + 1])
         np.testing.assert_allclose(w.real_yaw_rate, data["vicon_r"][i : i + N_STEPS + 1])
+        np.testing.assert_allclose(w.real_omega, data["rs_core_speed"][i : i + N_STEPS + 1] / R_W)
         np.testing.assert_allclose(w.cmd_steer, data["cmd_steer"][i : i + N_STEPS])
         np.testing.assert_allclose(w.cmd_speed, data["cmd_speed"][i : i + N_STEPS])
 
@@ -173,7 +174,7 @@ def test_nan_guard_drops_windows(tmp_path):
     ds = load_dataset(str(p), mirror=False)
     for w in ds.windows:
         assert np.all(np.isfinite(w.init_state))
-        for sig in (w.real_v_x, w.real_v_y, w.real_yaw_rate, w.real_a_x, w.cmd_steer, w.cmd_speed):
+        for sig in (w.real_v_x, w.real_v_y, w.real_yaw_rate, w.real_a_x, w.real_omega, w.cmd_steer, w.cmd_speed):
             assert np.all(np.isfinite(sig))
     expected_no_nan = (n - N_STEPS) // STRIDE + 1
     assert len(ds.windows) < expected_no_nan
@@ -230,6 +231,7 @@ def test_mirror_involution(asymmetric_npz):
     np.testing.assert_allclose(w_mm.real_v_y, w.real_v_y)
     np.testing.assert_allclose(w_mm.real_yaw_rate, w.real_yaw_rate)
     np.testing.assert_allclose(w_mm.real_a_x, w.real_a_x)
+    np.testing.assert_allclose(w_mm.real_omega, w.real_omega)
     assert w_mm.is_mirrored == w.is_mirrored
 
 
@@ -252,6 +254,7 @@ def test_mirror_sign_flips(asymmetric_npz):
     np.testing.assert_allclose(m.cmd_speed, w.cmd_speed)
     np.testing.assert_allclose(m.real_v_x, w.real_v_x)
     np.testing.assert_allclose(m.real_a_x, w.real_a_x)
+    np.testing.assert_allclose(m.real_omega, w.real_omega)
     # Wheel angular speeds are positive scalars, sign-symmetric under L/R mirror.
     assert m.init_state[7] == pytest.approx(w.init_state[7])
     assert m.init_state[8] == pytest.approx(w.init_state[8])
@@ -272,37 +275,6 @@ def test_mirror_doubles_dataset(straight_npz):
     assert len(ds_yes.windows) == 2 * len(ds_no.windows)
     n_mir = sum(w.is_mirrored for w in ds_yes.windows)
     assert n_mir == len(ds_no.windows)
-
-
-# -- Variances --
-
-
-def test_variances_keys_and_positivity(asymmetric_npz):
-    ds = load_dataset(asymmetric_npz, mirror=False)
-    assert set(ds.variances.keys()) == set(CHANNELS)
-    for v in ds.variances.values():
-        assert v >= 0.0
-
-
-def test_variance_matches_concatenation(asymmetric_npz):
-    ds = load_dataset(asymmetric_npz, mirror=False)
-    expected = {
-        "yaw_rate": float(np.var(np.concatenate([w.real_yaw_rate for w in ds.windows]))),
-        "v_y": float(np.var(np.concatenate([w.real_v_y for w in ds.windows]))),
-        "a_x": float(np.var(np.concatenate([w.real_a_x for w in ds.windows]))),
-        "v_x": float(np.var(np.concatenate([w.real_v_x for w in ds.windows]))),
-    }
-    for k, v in expected.items():
-        assert ds.variances[k] == pytest.approx(v)
-
-
-def test_mirror_does_not_affect_variances(asymmetric_npz):
-    """Variances are computed on the physical (non-mirrored) signals, so the NMSE scale
-    is the same regardless of whether mirroring is enabled."""
-    ds_no = load_dataset(asymmetric_npz, mirror=False)
-    ds_yes = load_dataset(asymmetric_npz, mirror=True)
-    for k in CHANNELS:
-        assert ds_yes.variances[k] == pytest.approx(ds_no.variances[k])
 
 
 # -- VESC-seeded wheel angular velocity (omega_f, omega_r) --

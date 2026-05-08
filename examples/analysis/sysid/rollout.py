@@ -85,14 +85,19 @@ class Rollout:
         v_x = np.empty(n + 1, dtype=np.float64)
         v_y = np.empty(n + 1, dtype=np.float64)
         yaw_rate = np.empty(n + 1, dtype=np.float64)
+        omega = np.empty(n + 1, dtype=np.float64)
 
         # `dynamic_state` obs surfaces body-frame v_x, v_y, yaw_rate from
         # agent.standard_state — same quantities the bag was built from.
+        # ω_front / ω_rear live on raw STD state[7:9]; mean matches the AWD
+        # reset assumption (real ω is a single VESC scalar seeding both).
+        agent = self._env.sim.agents[0]
         obs, _ = self._env.reset(options={"states": window.init_state.reshape(1, 9)})
         agent_obs = obs[self._agent_id]
         v_x[0] = agent_obs["linear_vel_x"]
         v_y[0] = agent_obs["linear_vel_y"]
         yaw_rate[0] = agent_obs["ang_vel_z"]
+        omega[0] = 0.5 * (agent.state[7] + agent.state[8])
 
         for k in range(n):
             action = np.array(
@@ -104,14 +109,15 @@ class Rollout:
             v_x[k + 1] = agent_obs["linear_vel_x"]
             v_y[k + 1] = agent_obs["linear_vel_y"]
             yaw_rate[k + 1] = agent_obs["ang_vel_z"]
+            omega[k + 1] = 0.5 * (agent.state[7] + agent.state[8])
 
         a_x = np.gradient(v_x, self._dt)
 
-        sim = {"yaw_rate": yaw_rate, "v_y": v_y, "a_x": a_x, "v_x": v_x}
+        sim = {"yaw_rate": yaw_rate, "v_y": v_y, "a_x": a_x, "v_x": v_x, "omega": omega}
 
         # Trial params can drive the integrator to NaN/inf. Surface this loudly
         # so the Optuna objective can map it to a prunable trial loss instead of
-        # silently propagating non-finite values into the NMSE.
+        # silently propagating non-finite values into the loss.
         for ch, arr in sim.items():
             if not np.all(np.isfinite(arr)):
                 raise FloatingPointError(

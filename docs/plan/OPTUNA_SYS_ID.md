@@ -11,13 +11,13 @@ This repo's STD (Single-Track Drift) dynamics model uses PAC2002 tire parameters
 ## Pipeline
 
 ```
-load_dataset(bag.npz)          # → list[Window] + per-channel variances
+load_dataset(bag.npz)          # → list[Window]
         │
         ▼
 Rollout(env)                   # one GKEnv; set_params hot-swaps PAC2002 coefficients
         │
         ▼  rollout.run(window) → dict[ch → sim signal]
-dataset_loss                   # weighted NMSE on {yaw_rate, v_y, a_x, v_x}
+dataset_loss                   # fixed-scale weighted MSE on {yaw_rate, v_y, a_x, v_x, omega}
         │
         ▼
 Optuna study (CMA-ES, JournalStorage)  # 6-D Stage-1, 4-D Stage-2
@@ -30,8 +30,8 @@ f1tenth_std_optuna_stage{1,2}.yaml
 
 | File | LoC | Purpose |
 |---|---|---|
-| `examples/analysis/sysid/dataset.py` | 361 | Load NPZ, slice to windows, mirror, compute variances. Includes a CLI plot helper for visual validation. |
-| `examples/analysis/sysid/loss.py` | 77 | `channel_nmse`, `window_loss`, `dataset_loss`. Pure functions. |
+| `examples/analysis/sysid/dataset.py` | 361 | Load NPZ, slice to windows, mirror. Includes a CLI plot helper for visual validation. |
+| `examples/analysis/sysid/loss.py` | 77 | `channel_loss`, `window_loss`, `dataset_loss`. Pure functions. |
 | `examples/analysis/sysid/rollout.py` | 361 | `Rollout` (one env, hot-swap params, NaN guard). Includes a CLI sim-vs-real overlay plot. |
 | `examples/analysis/sysid/sensitivity.py` | 203 | OAT sweep tool — `run_sweep`, console ranking, CSV. Used to lock the search space; archived for re-runs on new bags. |
 | `examples/analysis/sysid/search_spaces.py` | 79 | Stage-1 / Stage-2 distributions, `apply_trial_params`, import-time invariants. |
@@ -43,9 +43,8 @@ f1tenth_std_optuna_stage{1,2}.yaml
 
 | Decision | Choice | Why |
 |---|---|---|
-| Loss channels | `yaw_rate`, `v_y`, `a_x`, `v_x` | Direct dynamics outputs. |
-| Channel weights | `{3, 2, 1, 0.5}` | Bias toward lateral dynamics. |
-| Normalization | NMSE on per-channel variance | Makes channels commensurable. |
+| Loss channels | `yaw_rate`, `v_y`, `a_x`, `v_x`, `omega` | Direct dynamics outputs + drivetrain anchor (sim ω = mean of front/rear vs VESC AWD scalar). |
+| Channel coefficients | `CHANNEL_COEFFS = {yaw_rate: 3.0, v_y: 8.0, a_x: 0.04, v_x: 0.02, omega: 0.005}` | Single per-channel multiplier on MSE — bundles importance with unit-scaling so contributions land on a common magnitude. Replaces prior weight + per-dataset NMSE variance (which collapsed on steady-state bags). |
 | Window length / stride | 1.5 s / 0.5 s | Excite saturation; limit chaotic divergence. |
 | Warmup discard | 0.2 s | Eats steering-servo transient from `delta_init = cmd_steer[t0]`. |
 | Reset state | 9-element STD user state, `omega = rs_core_speed/R_w` (AWD) | `env.reset(options={"states": ...})` accepts 9-wide. |
@@ -123,7 +122,7 @@ done; wait
 
 **Live monitoring via wandb** (always on):
 
-Every study run logs per-trial `value`, per-channel NMSE (`nmse/yaw_rate`, `nmse/v_y`, `nmse/a_x`, `nmse/v_x`), and suggested params (`param/I_z`, ...) to wandb project `f1tenth-sysid`. Each parallel worker is a separate wandb run grouped by study name; the wandb UI shows N colored lines per chart with min/mean aggregation. Wandb auth must be set up on the host (same as RL training).
+Every study run logs per-trial `value`, per-channel loss contributions (`contrib/yaw_rate`, `contrib/v_y`, `contrib/a_x`, `contrib/v_x`, `contrib/omega` — each is `CHANNEL_COEFFS[ch] * MSE_ch`), and suggested params (`param/I_z`, ...) to wandb project `f1tenth-sysid`. Each parallel worker is a separate wandb run grouped by study name; the wandb UI shows N colored lines per chart with min/mean aggregation. Wandb auth must be set up on the host (same as RL training).
 
 **Re-run sensitivity on a new bag:**
 
@@ -154,10 +153,6 @@ Outputs CSV + console ranking. The richer Phase-2 outputs (markdown report, plot
 `env.configure({"params": ...})` rebuilds `self.action_type` on the env (`gymkhana_env.py:649`), but `self.sim.agents[i].action_type` still references the original `CarAction` from env construction. `RaceCar.update_params(params)` (`base_classes.py:199`) only updates `self.params`. Affects only params consumed in `CarAction.__init__` (currently `T_steer`, plus `s_max`/`sv_max` for normalization scale factors when `normalize_act=True`). Other identified params (`I_z`, `tire_p_*`) are read from `agent.params` each step in the dynamics function and propagate fine.
 
 **Fix sketch:** make `RaceCar.update_params` rebuild `self.action_type` if relevant params changed, or add a `Simulator.set_action_type(...)` propagation. ~10-line change in `base_classes.py`. Trigger to fix: any future sysid effort that needs to identify `T_steer` (e.g. on a richer maneuver bag with rapid step-steers where the warmup discard isn't sufficient).
-
-### `omega` as a loss channel
-
-The reset side is done — windows seed `omega_front = omega_rear = rs_core_speed/R_w` from VESC under the AWD assumption. Adding `omega` *as a scored channel* would constrain longitudinal-tire identifiability. Trigger: end of Phase 4 if `a_x` NMSE plateaus high after exhausting `tire_p_dx1` / `tire_p_ex1`.
 
 ### Plotting / wandb / multi-bag aggregation
 
