@@ -47,7 +47,13 @@ CHANNEL_COEFFS: dict[str, float] = {
     "v_x": 2.0,
     "omega": 0.005,
     "pose": 5.0,
+    "yaw": 1.0,  # TODO_TUNE via validate.py
+    "beta": 1.0,  # TODO_TUNE via validate.py
 }
+
+# Channels whose residuals must be wrapped to (−π, π] before squaring,
+# otherwise (s − r)² is wrong near the ±π wrap.
+_ANGULAR_CHANNELS: frozenset[str] = frozenset({"yaw", "beta"})
 
 
 def channel_loss(sim: np.ndarray, real: np.ndarray, coeff: float) -> float:
@@ -71,7 +77,13 @@ def window_loss(
         assert sim_full.shape == real_full.shape, (
             f"sim[{ch!r}] shape {sim_full.shape} does not match real shape {real_full.shape}"
         )
-        contrib = channel_loss(sim_full[warmup_steps:], real_full[warmup_steps:], coeffs[ch])
+        sim_w = sim_full[warmup_steps:]
+        real_w = real_full[warmup_steps:]
+        if ch in _ANGULAR_CHANNELS:
+            diff = np.arctan2(np.sin(sim_w - real_w), np.cos(sim_w - real_w))
+            contrib = coeffs[ch] * float(np.mean(diff**2))
+        else:
+            contrib = channel_loss(sim_w, real_w, coeffs[ch])
         per_channel[ch] = contrib
         weighted_total += contrib
     return weighted_total, per_channel

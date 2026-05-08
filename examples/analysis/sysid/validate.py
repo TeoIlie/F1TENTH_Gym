@@ -62,20 +62,21 @@ def _plot_dataset_overview(dataset: Dataset, npz_path: str, out_path: str, mirro
     n_steps = len(selected[0].cmd_steer) if selected else 0
 
     suffix = " [MIRRORED]" if mirror else ""
-    fig, grid = plt.subplots(2, 4, figsize=(32, 14))
+    fig, grid = plt.subplots(2, 5, figsize=(40, 14))
     fig.suptitle(
         f"Dataset overview{suffix} — {os.path.basename(npz_path)} ({len(selected)} windows)",
         fontsize=14,
     )
     axes = [
-        grid[0, 0],
-        grid[0, 1],
-        grid[0, 2],
-        grid[1, 0],
-        grid[1, 1],
-        grid[1, 2],
-        grid[1, 3],
-        grid[0, 3],
+        grid[0, 0],  # XY
+        grid[0, 1],  # vx
+        grid[0, 2],  # vy
+        grid[1, 0],  # steer
+        grid[1, 1],  # yaw_rate
+        grid[1, 2],  # a_x
+        grid[1, 3],  # beta
+        grid[0, 3],  # omega
+        grid[0, 4],  # heading (yaw)
     ]
 
     def shade_windows(ax):
@@ -168,6 +169,18 @@ def _plot_dataset_overview(dataset: Dataset, npz_path: str, out_path: str, mirro
     ax.legend()
     ax.grid(True, alpha=0.3)
 
+    ax = axes[8]
+    shade_windows(ax)
+    real_yaw_full = -data["vicon_yaw"] if mirror else data["vicon_yaw"]
+    ax.plot(t, real_yaw_full, label="Real yaw (unwrapped)", linewidth=1)
+    for w in selected:
+        ax.plot(t[w.t0_idx], w.init_state[4], "o", color="orange", markersize=4)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Yaw (rad)")
+    ax.set_title("Heading (orange dots = init yaw)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
     fig.tight_layout()
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=120, bbox_inches="tight")
@@ -183,7 +196,40 @@ def _debug_to_loss_sim(traces: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "v_x": traces["linear_vel_x"],
         "omega": 0.5 * (traces["omega_front"] + traces["omega_rear"]),
         "pose": np.stack([traces["pose_x"], traces["pose_y"]], axis=-1),
+        "yaw": traces["pose_theta"],
+        "beta": traces["beta"],
     }
+
+
+def _check_yaw_continuity(
+    originals: list[Window],
+    sim_traces: list[dict[str, np.ndarray]],
+    *,
+    step_thr: float = np.pi / 2,
+) -> list[tuple[int, float, float]]:
+    """Per-window max |Δyaw| must stay below step_thr in both sim and real;
+    otherwise an upstream wrap was missed and the overlay plot would mislead
+    (loss math is still correct via the wrapped residual).
+    """
+    failures: list[tuple[int, float, float]] = []
+    for w, tr in zip(originals, sim_traces):
+        max_sim = float(np.max(np.abs(np.diff(tr["pose_theta"]))))
+        max_real = float(np.max(np.abs(np.diff(w.real_yaw))))
+        if max_sim > step_thr or max_real > step_thr:
+            failures.append((int(w.t0_idx), max_sim, max_real))
+    return failures
+
+
+def _format_continuity_lines(failures: list[tuple[int, float, float]]) -> list[str]:
+    if not failures:
+        return ["yaw_continuity: PASS"]
+    lines = [
+        f"WARN: yaw continuity check failed for {len(failures)} window(s) "
+        "(per-step Δyaw > π/2; overlay plot may mislead, loss math still correct):"
+    ]
+    for t0_idx, max_sim, max_real in failures:
+        lines.append(f"  t0_idx={t0_idx} max_sim_step={max_sim:.4f} max_real_step={max_real:.4f}")
+    return lines
 
 
 def _plot_rollout_overlay(
@@ -216,20 +262,22 @@ def _plot_rollout_overlay(
 
     n_steps = len(originals[0].cmd_steer) if originals else 0
 
-    fig, grid = plt.subplots(2, 4, figsize=(32, 14))
+    fig, grid = plt.subplots(2, 5, figsize=(40, 14))
     fig.suptitle(
         f"Rollout overlay — {os.path.basename(npz_path)} ({len(originals)} windows)",
         fontsize=14,
     )
     axes = [
-        grid[0, 0],
-        grid[0, 1],
-        grid[0, 2],
-        grid[1, 0],
-        grid[1, 1],
-        grid[1, 2],
-        grid[1, 3],
-        grid[0, 3],
+        grid[0, 0],  # XY
+        grid[0, 1],  # v_x
+        grid[0, 2],  # v_y
+        grid[1, 0],  # steering
+        grid[1, 1],  # yaw_rate
+        grid[1, 2],  # a_x
+        grid[1, 3],  # beta
+        grid[0, 3],  # omega
+        grid[0, 4],  # heading overlay (sim − init vs real − init)
+        grid[1, 4],  # heading wrapped residual
     ]
 
     def shade_warmup(ax):
@@ -322,6 +370,58 @@ def _plot_rollout_overlay(
     ax.legend()
     ax.grid(True, alpha=0.3)
 
+    # Heading overlay — subtract init_state[4] so all windows share one y-axis.
+    ax = axes[8]
+    first = True
+    for w, tr in zip(originals, sim_traces):
+        tt = window_t(w)
+        init_yaw = w.init_state[4]
+        ax.plot(
+            tt,
+            w.real_yaw - init_yaw,
+            color="C0",
+            linewidth=1.0,
+            label="Real Δyaw" if first else None,
+        )
+        ax.plot(
+            tt,
+            tr["pose_theta"] - init_yaw,
+            "--",
+            color="C1",
+            linewidth=1.2,
+            label="Sim Δyaw" if first else None,
+        )
+        first = False
+    shade_warmup(ax)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Δyaw vs init (rad)")
+    ax.set_title("Heading — sim vs real (each window centered at init yaw)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Wrapped heading residual — exactly what the loss squares.
+    ax = axes[9]
+    first = True
+    for w, tr in zip(originals, sim_traces):
+        tt = window_t(w)
+        diff = tr["pose_theta"] - w.real_yaw
+        wrapped = np.arctan2(np.sin(diff), np.cos(diff))
+        ax.plot(
+            tt,
+            wrapped,
+            color="C3",
+            linewidth=1.0,
+            label="wrap(sim − real)" if first else None,
+        )
+        first = False
+    ax.axhline(0.0, color="gray", linewidth=0.5, alpha=0.5)
+    shade_warmup(ax)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Wrapped residual (rad)")
+    ax.set_title("Heading wrapped residual (loss target; jumps = wrap bug)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
     fig.tight_layout()
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=120, bbox_inches="tight")
@@ -355,6 +455,7 @@ def _write_metrics(
     dataset: Dataset,
     total_loss: float,
     per_channel: dict[str, float],
+    continuity_failures: list[tuple[int, float, float]],
 ) -> None:
     n_originals = sum(not w.is_mirrored for w in dataset.windows)
     n_mirrored = len(dataset.windows) - n_originals
@@ -377,6 +478,8 @@ def _write_metrics(
         f"total_loss: {total_loss:.6f}",
         "",
         *_format_channel_table(per_channel),
+        "",
+        *_format_continuity_lines(continuity_failures),
     ]
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
@@ -455,6 +558,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"saved {out_dir / 'rollout_overlay.png'}")
 
+        continuity_failures = _check_yaw_continuity(originals, sim_traces)
+        for line in _format_continuity_lines(continuity_failures):
+            print(line)
+
         for w, tr in zip(originals, sim_traces):
             total, per_ch = window_loss(_debug_to_loss_sim(tr), w, CHANNEL_COEFFS, warmup_steps)
             totals.append(total)
@@ -485,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset=dataset,
         total_loss=total_loss,
         per_channel=per_channel,
+        continuity_failures=continuity_failures,
     )
     print(f"saved {metrics_path}")
     return 0

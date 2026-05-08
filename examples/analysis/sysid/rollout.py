@@ -87,6 +87,8 @@ class Rollout:
         yaw_rate = np.empty(n + 1, dtype=np.float64)
         omega = np.empty(n + 1, dtype=np.float64)
         pose = np.empty((n + 1, 2), dtype=np.float64)
+        yaw = np.empty(n + 1, dtype=np.float64)
+        beta = np.empty(n + 1, dtype=np.float64)
 
         # `dynamic_state` obs surfaces body-frame v_x, v_y, yaw_rate from
         # agent.standard_state — same quantities the bag was built from.
@@ -102,6 +104,8 @@ class Rollout:
         omega[0] = 0.5 * (agent.state[7] + agent.state[8])
         pose[0, 0] = agent_obs["pose_x"]
         pose[0, 1] = agent_obs["pose_y"]
+        yaw[0] = agent_obs["pose_theta"]
+        beta[0] = agent_obs["beta"]
 
         for k in range(n):
             action = np.array(
@@ -116,10 +120,23 @@ class Rollout:
             omega[k + 1] = 0.5 * (agent.state[7] + agent.state[8])
             pose[k + 1, 0] = agent_obs["pose_x"]
             pose[k + 1, 1] = agent_obs["pose_y"]
+            yaw[k + 1] = agent_obs["pose_theta"]
+            beta[k + 1] = agent_obs["beta"]
 
         a_x = np.gradient(v_x, self._dt)
+        # Env wraps pose_theta to [0, 2π); unwrap to match bag's vicon_yaw.
+        yaw = np.unwrap(yaw)
 
-        sim = {"yaw_rate": yaw_rate, "v_y": v_y, "a_x": a_x, "v_x": v_x, "omega": omega, "pose": pose}
+        sim = {
+            "yaw_rate": yaw_rate,
+            "v_y": v_y,
+            "a_x": a_x,
+            "v_x": v_x,
+            "omega": omega,
+            "pose": pose,
+            "yaw": yaw,
+            "beta": beta,
+        }
 
         # Trial params can drive the integrator to NaN/inf. Surface this loudly
         # so the Optuna objective can map it to a prunable trial loss instead of
@@ -166,6 +183,7 @@ class Rollout:
             record(k + 1, obs[self._agent_id])
 
         traces["a_x"] = np.gradient(traces["linear_vel_x"], self._dt)
+        traces["pose_theta"] = np.unwrap(traces["pose_theta"])
         return traces
 
 

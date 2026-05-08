@@ -43,7 +43,8 @@ f1tenth_std_optuna_stage{1,2}.yaml
 
 | Decision | Choice | Why |
 |---|---|---|
-| Loss channels | `yaw_rate`, `v_y`, `a_x`, `v_x`, `omega`, `pose` | Direct dynamics outputs + drivetrain anchor (sim ω = mean of front/rear vs VESC AWD scalar) + world-frame XY tracking (catches integrated bias not visible in per-step velocity residuals). |
+| Loss channels | `yaw_rate`, `v_y`, `a_x`, `v_x`, `omega`, `pose`, `yaw`, `beta` | Direct dynamics outputs + drivetrain anchor (sim ω = mean of front/rear vs VESC AWD scalar) + world-frame XY tracking + heading (catches integrated yaw_rate bias) + slip angle (re-weights v_y/v_x residual to emphasize orientation; not new information). |
+| Loss formula | Fixed-scale weighted MSE for non-angular channels; **wrapped MSE** for angular channels (`yaw`, `beta`): residual is `arctan2(sin(s−r), cos(s−r))` before squaring, gated by `_ANGULAR_CHANNELS` in `loss.py`. | Plain `(s−r)²` is incorrect near the ±π wrap (a 5° physical error at the wrap boundary becomes a 360° numerical error). Bounding angular contributions to ≤ coeff·π² also keeps divergent trials from blowing up the loss. |
 | Channel coefficients | See `CHANNEL_COEFFS` in `loss.py` (**values still being tuned via `validate.py`** — refer to source, not this doc, for the current numbers). | Single per-channel multiplier on MSE — bundles importance with unit-scaling so contributions land on a common magnitude. Replaces prior weight + per-dataset NMSE variance (which collapsed on steady-state bags). `pose` is a 2-D channel `(N+1, 2)`; element-wise MSE gives `½·mean(Δx²+Δy²)` and the ½ is absorbed into the coefficient (rotation-invariant in world frame). |
 | Window length / stride | 1.5 s / 0.5 s | Excite saturation; limit chaotic divergence. |
 | Warmup discard | 0.2 s | Eats steering-servo transient from `delta_init = cmd_steer[t0]`. |
@@ -122,7 +123,7 @@ done; wait
 
 **Live monitoring via wandb** (always on):
 
-Every study run logs per-trial `value`, per-channel loss contributions (`contrib/yaw_rate`, `contrib/v_y`, `contrib/a_x`, `contrib/v_x`, `contrib/omega` — each is `CHANNEL_COEFFS[ch] * MSE_ch`), and suggested params (`param/I_z`, ...) to wandb project `f1tenth-sysid`. Each parallel worker is a separate wandb run grouped by study name; the wandb UI shows N colored lines per chart with min/mean aggregation. Wandb auth must be set up on the host (same as RL training).
+Every study run logs per-trial `value`, per-channel loss contributions (`contrib/yaw_rate`, `contrib/v_y`, `contrib/a_x`, `contrib/v_x`, `contrib/omega`, `contrib/pose`, `contrib/yaw`, `contrib/beta` — each is `CHANNEL_COEFFS[ch] * MSE_ch`, with `yaw`/`beta` using wrapped residuals), and suggested params (`param/I_z`, ...) to wandb project `f1tenth-sysid`. Each parallel worker is a separate wandb run grouped by study name; the wandb UI shows N colored lines per chart with min/mean aggregation. Wandb auth must be set up on the host (same as RL training).
 
 **Re-run sensitivity on a new bag:**
 

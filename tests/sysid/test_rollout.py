@@ -195,6 +195,8 @@ def test_mirror_invariant_under_default_params(rollout):
         real_a_x=np.zeros(n + 1),
         real_omega=np.zeros(n + 1),
         real_pose=np.zeros((n + 1, 2)),
+        real_yaw=np.zeros(n + 1),
+        real_beta=np.zeros(n + 1),
         is_mirrored=False,
     )
     w_mirr = mirror_window(w)
@@ -217,6 +219,9 @@ def test_mirror_invariant_under_default_params(rollout):
     # World-frame pose: x stays, y flips under L/R mirror.
     np.testing.assert_allclose(sim_m["pose"][:, 0], sim["pose"][:, 0], **tol)
     np.testing.assert_allclose(sim_m["pose"][:, 1], -sim["pose"][:, 1], **tol)
+    # Heading and slip both flip sign under L/R mirror.
+    np.testing.assert_allclose(sim_m["yaw"], -sim["yaw"], **tol)
+    np.testing.assert_allclose(sim_m["beta"], -sim["beta"], **tol)
 
 
 # ---------- NaN/inf guard ----------
@@ -236,6 +241,8 @@ def test_run_raises_on_non_finite_sim_signal(rollout, dataset, monkeypatch):
             "ang_vel_z": 0.0,
             "pose_x": 0.0,
             "pose_y": 0.0,
+            "pose_theta": 0.0,
+            "beta": 0.0,
         }
     }
     fake_step = MagicMock(return_value=(nan_obs, 0.0, False, False, {}))

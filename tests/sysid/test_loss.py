@@ -44,6 +44,8 @@ def _make_window(rng: np.random.Generator, t0_idx: int = 0) -> Window:
         real_a_x=rng.normal(0.0, 1.0, N + 1),
         real_omega=rng.normal(20.0, 2.0, N + 1),
         real_pose=rng.normal(0.0, 1.0, (N + 1, 2)),
+        real_yaw=rng.normal(0.0, 0.3, N + 1),
+        real_beta=rng.normal(0.0, 0.1, N + 1),
         is_mirrored=False,
     )
 
@@ -56,6 +58,8 @@ def _sim_from_real(window: Window) -> dict[str, np.ndarray]:
         "v_x": window.real_v_x.copy(),
         "omega": window.real_omega.copy(),
         "pose": window.real_pose.copy(),
+        "yaw": window.real_yaw.copy(),
+        "beta": window.real_beta.copy(),
     }
 
 
@@ -124,7 +128,7 @@ def test_window_loss_post_warmup_perturbation_counted():
 
     expected_yaw_contrib = CHANNEL_COEFFS["yaw_rate"] * (0.5**2)
     assert per_channel["yaw_rate"] == pytest.approx(expected_yaw_contrib, rel=1e-9)
-    for ch in ("v_y", "a_x", "v_x", "omega", "pose"):
+    for ch in ("v_y", "a_x", "v_x", "omega", "pose", "yaw", "beta"):
         assert per_channel[ch] == pytest.approx(0.0, abs=1e-12)
     assert total == pytest.approx(expected_yaw_contrib, rel=1e-9)
 
@@ -136,15 +140,23 @@ def test_window_loss_total_is_sum_of_per_channel_contribs():
     rng = np.random.default_rng(4)
     w = _make_window(rng)
     sim = _sim_from_real(w)
-    offsets = {"yaw_rate": 0.1, "v_y": 0.2, "a_x": 0.3, "v_x": 0.4, "omega": 1.0, "pose": 0.5}
+    # Angular offsets kept small so wrapped == raw, preserving coeff * off².
+    offsets = {
+        "yaw_rate": 0.1,
+        "v_y": 0.2,
+        "a_x": 0.3,
+        "v_x": 0.4,
+        "omega": 1.0,
+        "pose": 0.5,
+        "yaw": 0.05,
+        "beta": 0.05,
+    }
     for ch, off in offsets.items():
         sim[ch][WARMUP_STEPS:] += off  # broadcasts cleanly onto 2D pose (both columns)
 
     total, per_channel = window_loss(sim, w, CHANNEL_COEFFS, WARMUP_STEPS)
     expected_total = sum(per_channel[ch] for ch in CHANNELS)
     assert total == pytest.approx(expected_total, rel=1e-12)
-    # Each contrib matches coeff * offset^2 — for pose, both columns get the same
-    # offset, so every element of (sim - real)^2 equals off^2 → mean is off^2 too.
     for ch, off in offsets.items():
         assert per_channel[ch] == pytest.approx(CHANNEL_COEFFS[ch] * (off**2), rel=1e-9)
 
@@ -177,7 +189,7 @@ def test_window_loss_pose_channel_joint_mse_2d():
 
     expected = 0.5 * (dx**2 + dy**2)  # mean over 2 axes of [dx², dy²]
     assert per_channel["pose"] == pytest.approx(expected, rel=1e-9)
-    for ch in ("yaw_rate", "v_y", "a_x", "v_x", "omega"):
+    for ch in ("yaw_rate", "v_y", "a_x", "v_x", "omega", "yaw", "beta"):
         assert per_channel[ch] == pytest.approx(0.0, abs=1e-12)
 
 
@@ -243,7 +255,7 @@ def test_dataset_loss_aggregates_as_arithmetic_mean():
     contrib1 = CHANNEL_COEFFS["yaw_rate"] * (0.3**2)
     expected_mean = 0.5 * (contrib0 + contrib1)
     assert per_channel["yaw_rate"] == pytest.approx(expected_mean, rel=1e-9)
-    for ch in ("v_y", "a_x", "v_x", "omega", "pose"):
+    for ch in ("v_y", "a_x", "v_x", "omega", "pose", "yaw", "beta"):
         assert per_channel[ch] == pytest.approx(0.0, abs=1e-12)
     assert total == pytest.approx(expected_mean, rel=1e-9)
 
@@ -270,3 +282,39 @@ def test_dataset_loss_mirror_invariance_under_symmetric_sim():
     assert total_orig == pytest.approx(total_mirr, abs=1e-12)
     for ch in CHANNELS:
         assert per_orig[ch] == pytest.approx(per_mirr[ch], abs=1e-12)
+
+
+# ---------- angular wrap (yaw, beta) ----------
+
+
+@pytest.mark.parametrize("ch", ["yaw", "beta"])
+def test_window_loss_angular_wrap_near_pi(ch):
+    """+π−ε vs −π+ε: plain MSE would be ~(2π)²; wrapped must be ~(2ε)²."""
+    rng = np.random.default_rng(20)
+    w = _make_window(rng)
+    sim = _sim_from_real(w)
+    eps = 0.05
+    getattr(w, f"real_{ch}")[WARMUP_STEPS:] = np.pi - eps
+    sim[ch][WARMUP_STEPS:] = -np.pi + eps
+
+    coeffs = dict(CHANNEL_COEFFS)
+    coeffs[ch] = 1.0
+    _, per_channel = window_loss(sim, w, coeffs, WARMUP_STEPS)
+
+    assert per_channel[ch] == pytest.approx((2 * eps) ** 2, rel=1e-6)
+
+
+@pytest.mark.parametrize("ch", ["yaw", "beta"])
+def test_window_loss_angular_wrap_matches_plain_mse_for_small_residual(ch):
+    """Far from the wrap, wrap(s−r) == s−r → angular branch reduces to plain MSE."""
+    rng = np.random.default_rng(21)
+    w = _make_window(rng)
+    sim = _sim_from_real(w)
+    off = 0.03
+    sim[ch][WARMUP_STEPS:] += off
+
+    coeffs = dict(CHANNEL_COEFFS)
+    coeffs[ch] = 1.0
+    _, per_channel = window_loss(sim, w, coeffs, WARMUP_STEPS)
+
+    assert per_channel[ch] == pytest.approx(off**2, rel=1e-9)
