@@ -157,7 +157,13 @@ def test_window_loss_per_channel_keys_complete():
 
 
 def _make_dataset(windows: list[Window]) -> Dataset:
-    return Dataset(windows=windows, dt=DT)
+    return Dataset(
+        windows=windows,
+        dt=DT,
+        n_candidates=len(windows),
+        n_dropped_low_speed=0,
+        n_dropped_nonfinite=0,
+    )
 
 
 def test_dataset_loss_identity():
@@ -225,7 +231,7 @@ def test_dataset_loss_mirror_invariance_under_symmetric_sim():
     w = _make_window(rng)
     w_mirr = mirror_window(w)
     ds_orig = _make_dataset([w])
-    ds_mirr = Dataset(windows=[w_mirr], dt=DT)
+    ds_mirr = _make_dataset([w_mirr])
 
     def rollout(window: Window) -> dict[str, np.ndarray]:
         return _sim_from_real(window)

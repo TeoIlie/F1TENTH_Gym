@@ -5,10 +5,10 @@ gymkhana simulator and produces a side-by-side comparison plot (XY trajectory,
 velocity, steering) saved as a single image.
 
 Usage:
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model ks
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model st
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model std
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model stp
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model ks
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model st
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model std
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model stp
 
 Output:
     figures/analysis/traj_compare/<bag_stem>/plt_<model>.png
@@ -31,14 +31,14 @@ from gymkhana.envs.gymkhana_env import GKEnv
 
 def main():
     parser = argparse.ArgumentParser(description="Sim2Real trajectory comparison")
-    parser.add_argument("--path", required=True, help="Path to 100Hz resampled NPZ file")
+    parser.add_argument("--bag", required=True, help="Path to 100Hz resampled NPZ file")
     parser.add_argument("--model", required=True, choices=["ks", "st", "std", "stp"], help="Vehicle dynamics model")
     parser.add_argument("--start", type=int, default=None, help="Start timestep index (inclusive, 0-based)")
     parser.add_argument("--end", type=int, default=None, help="End timestep index (inclusive, 0-based)")
     args = parser.parse_args()
 
     # Load real data
-    data = np.load(args.path)
+    data = np.load(args.bag)
     bag_len = len(data["t"])
     start = args.start if args.start is not None else 0
     end = args.end if args.end is not None else bag_len - 1
@@ -61,7 +61,7 @@ def main():
     rs_core_speed = data["rs_core_speed"][sl] if "rs_core_speed" in data.files else None
 
     # Output path
-    stem = Path(args.path).stem
+    stem = Path(args.bag).stem
     out_dir = os.path.join("figures", "analysis", "traj_compare", stem)
     os.makedirs(out_dir, exist_ok=True)
     suffix = f"_{start}_{end}" if is_sliced else ""
