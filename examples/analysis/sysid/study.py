@@ -63,7 +63,8 @@ class Objective:
     non-finite values) and was raising ``AssertionError: Should not reach.``
     in ``_run_trial`` — pruning is the correct signal for a degenerate trial.
 
-    If ``wandb_run`` is provided, logs per-trial value + per-channel NMSE +
+    If ``wandb_run`` is provided, logs per-trial value + per-channel loss
+    contributions (``contrib/<ch>`` = ``CHANNEL_COEFFS[ch] * MSE_ch``) +
     suggested params keyed by trial number. Diverged trials log ``value=inf``
     so they show up in the wandb chart, but Optuna records them as PRUNED.
     """
@@ -101,7 +102,7 @@ class Objective:
         if self.wandb_run is not None:
             log_dict: dict = {"trial": trial.number, "value": total, "diverged": int(diverged)}
             for ch, v in per_channel.items():
-                log_dict[f"nmse/{ch}"] = v
+                log_dict[f"contrib/{ch}"] = v
             for k, v in values.items():
                 log_dict[f"param/{k}"] = v
             self.wandb_run.log(log_dict, step=trial.number)
