@@ -86,11 +86,13 @@ class Rollout:
         v_y = np.empty(n + 1, dtype=np.float64)
         yaw_rate = np.empty(n + 1, dtype=np.float64)
         omega = np.empty(n + 1, dtype=np.float64)
+        pose = np.empty((n + 1, 2), dtype=np.float64)
 
         # `dynamic_state` obs surfaces body-frame v_x, v_y, yaw_rate from
         # agent.standard_state — same quantities the bag was built from.
         # ω_front / ω_rear live on raw STD state[7:9]; mean matches the AWD
         # reset assumption (real ω is a single VESC scalar seeding both).
+        # World-frame pose_x / pose_y feed the integrated XY tracking channel.
         agent = self._env.sim.agents[0]
         obs, _ = self._env.reset(options={"states": window.init_state.reshape(1, 9)})
         agent_obs = obs[self._agent_id]
@@ -98,6 +100,8 @@ class Rollout:
         v_y[0] = agent_obs["linear_vel_y"]
         yaw_rate[0] = agent_obs["ang_vel_z"]
         omega[0] = 0.5 * (agent.state[7] + agent.state[8])
+        pose[0, 0] = agent_obs["pose_x"]
+        pose[0, 1] = agent_obs["pose_y"]
 
         for k in range(n):
             action = np.array(
@@ -110,10 +114,12 @@ class Rollout:
             v_y[k + 1] = agent_obs["linear_vel_y"]
             yaw_rate[k + 1] = agent_obs["ang_vel_z"]
             omega[k + 1] = 0.5 * (agent.state[7] + agent.state[8])
+            pose[k + 1, 0] = agent_obs["pose_x"]
+            pose[k + 1, 1] = agent_obs["pose_y"]
 
         a_x = np.gradient(v_x, self._dt)
 
-        sim = {"yaw_rate": yaw_rate, "v_y": v_y, "a_x": a_x, "v_x": v_x, "omega": omega}
+        sim = {"yaw_rate": yaw_rate, "v_y": v_y, "a_x": a_x, "v_x": v_x, "omega": omega, "pose": pose}
 
         # Trial params can drive the integrator to NaN/inf. Surface this loudly
         # so the Optuna objective can map it to a prunable trial loss instead of

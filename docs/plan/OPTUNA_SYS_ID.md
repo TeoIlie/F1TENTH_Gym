@@ -43,12 +43,12 @@ f1tenth_std_optuna_stage{1,2}.yaml
 
 | Decision | Choice | Why |
 |---|---|---|
-| Loss channels | `yaw_rate`, `v_y`, `a_x`, `v_x`, `omega` | Direct dynamics outputs + drivetrain anchor (sim ω = mean of front/rear vs VESC AWD scalar). |
-| Channel coefficients | `CHANNEL_COEFFS = {yaw_rate: 3.0, v_y: 8.0, a_x: 0.04, v_x: 0.02, omega: 0.005}` | Single per-channel multiplier on MSE — bundles importance with unit-scaling so contributions land on a common magnitude. Replaces prior weight + per-dataset NMSE variance (which collapsed on steady-state bags). |
+| Loss channels | `yaw_rate`, `v_y`, `a_x`, `v_x`, `omega`, `pose` | Direct dynamics outputs + drivetrain anchor (sim ω = mean of front/rear vs VESC AWD scalar) + world-frame XY tracking (catches integrated bias not visible in per-step velocity residuals). |
+| Channel coefficients | See `CHANNEL_COEFFS` in `loss.py` (**values still being tuned via `validate.py`** — refer to source, not this doc, for the current numbers). | Single per-channel multiplier on MSE — bundles importance with unit-scaling so contributions land on a common magnitude. Replaces prior weight + per-dataset NMSE variance (which collapsed on steady-state bags). `pose` is a 2-D channel `(N+1, 2)`; element-wise MSE gives `½·mean(Δx²+Δy²)` and the ½ is absorbed into the coefficient (rotation-invariant in world frame). |
 | Window length / stride | 1.5 s / 0.5 s | Excite saturation; limit chaotic divergence. |
 | Warmup discard | 0.2 s | Eats steering-servo transient from `delta_init = cmd_steer[t0]`. |
 | Reset state | 9-element STD user state, `omega = rs_core_speed/R_w` (AWD) | `env.reset(options={"states": ...})` accepts 9-wide. |
-| Mirroring | On by default | Removes L/R bias; STD is structurally symmetric. |
+| Mirroring | Off by default; opt-in via `--mirror` | STD is *near*-symmetric: PAC2002 shift terms (`p_hy1`, `p_vy1`, `p_hx1`, `p_vx1`, plus camber-coupled `p_hy3`/`p_vy3`/`p_dy3`/`p_dx3`) break exact L/R symmetry and are all frozen in the search space, so the model can only fit the symmetric component of the data anyway. On a balanced L+R bag, mirroring is a near-no-op that doubles compute. On a single-handed bag, opt in via `--mirror` to project the fit onto the symmetric subspace and avoid params absorbing the bag's directional bias. |
 | Sampler | `CmaEsSampler(seed=...)` | 6-D continuous + parameter coupling — CMA-ES wheelhouse. |
 | Pruner | None (v1) | Pruning is a runtime optimization, not correctness. Add only if cost demands. |
 | Storage | `JournalStorage` at `<repo>/studies/<name>.journal` | Append-only log file, race-free for parallel workers (no DDL, no schema, no alembic). |

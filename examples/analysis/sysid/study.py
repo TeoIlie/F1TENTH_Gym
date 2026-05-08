@@ -162,6 +162,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--storage", default=None, help="Path to the Optuna journal file. Default: <repo>/studies/<study_name>.journal"
     )
     p.add_argument("--out-yaml", default=None, help="Default: gymkhana/envs/params/f1tenth_std_optuna_stage{N}.yaml")
+    p.add_argument(
+        "--mirror",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="L/R-mirror windows to symmetrize a single-handed bag (default: off).",
+    )
     return p.parse_args(argv)
 
 
@@ -188,8 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     space = STAGE_SPACES[args.stage]
     base_params = _load_base_params(args.stage, args.base_params)
 
-    _LOG.info("Loading dataset from %s", bag)
-    dataset = load_dataset(str(bag))
+    _LOG.info("Loading dataset from %s (mirror=%s)", bag, args.mirror)
+    dataset = load_dataset(str(bag), mirror=args.mirror)
     _LOG.info("Dataset: %d windows", len(dataset.windows))
     _LOG.info("Study: name=%s journal=%s", name, journal_path)
     study = build_study(name, journal_path, SEED)
@@ -204,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             "stage": args.stage,
             "n_trials": args.n_trials,
             "seed": SEED,
+            "mirror": args.mirror,
             "search_space": {k: [d.low, d.high] for k, d in space.items()},
             "baseline_phase1": PHASE1_BASELINES.get(bag.stem),
         },

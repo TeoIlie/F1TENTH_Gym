@@ -15,6 +15,14 @@ Each coefficient bundles "how much do I care about this channel" with a
 unit-scaling factor, so contributions land on comparable, unitless magnitudes
 without depending on per-dataset variance (which collapses on steady-state bags).
 
+Most channels are 1-D arrays of shape (N+1,). The `pose` channel is the
+exception: sim["pose"] and Window.real_pose are both (N+1, 2) (column 0 = x,
+column 1 = y). `np.mean((sim - real)**2)` then averages over all 2(N+1)
+elements, i.e. yields ½ · mean(Δx² + Δy²) — half the textbook squared
+Euclidean distance per timestep. The factor of ½ is silently absorbed into
+CHANNEL_COEFFS["pose"] (which is hand-tuned anyway), so no special-case
+branch is needed in window_loss.
+
 See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 """
 
@@ -29,16 +37,23 @@ from examples.analysis.sysid.dataset import CHANNELS, Dataset, Window
 # Per-channel coefficients combining importance and unit-scaling. Tuned so each
 # contribution lands on a comparable, unitless magnitude given typical drift-regime
 # signal scales (yaw_rate ~1 rad/s, v_y ~0.5 m/s, a_x ~5 m/s², v_x ~5 m/s).
+# `pose` is a 2-D channel: contribution is coeff * ½ · mean(Δx² + Δy²); the
+# factor of ½ is absorbed into the coefficient. Tune via validate.py before
+# launching a study.
 CHANNEL_COEFFS: dict[str, float] = {
-    "yaw_rate": 3.0,
-    "v_y": 8.0,
+    "yaw_rate": 0.3,
+    "v_y": 0.5,
     "a_x": 0.04,
-    "v_x": 0.02,
+    "v_x": 2.0,
     "omega": 0.005,
+    "pose": 5.0,
 }
 
 
 def channel_loss(sim: np.ndarray, real: np.ndarray, coeff: float) -> float:
+    # `np.mean` with no axis is intentional: collapses over all dims so this
+    # function works uniformly for 1-D channels (yaw_rate, v_y, ...) and the
+    # 2-D `pose` channel (shape (N+1, 2)). Don't add `axis=0` here.
     return coeff * float(np.mean((sim - real) ** 2))
 
 

@@ -43,6 +43,7 @@ def _make_window(rng: np.random.Generator, t0_idx: int = 0) -> Window:
         real_yaw_rate=rng.normal(0.0, 0.5, N + 1),
         real_a_x=rng.normal(0.0, 1.0, N + 1),
         real_omega=rng.normal(20.0, 2.0, N + 1),
+        real_pose=rng.normal(0.0, 1.0, (N + 1, 2)),
         is_mirrored=False,
     )
 
@@ -54,6 +55,7 @@ def _sim_from_real(window: Window) -> dict[str, np.ndarray]:
         "a_x": window.real_a_x.copy(),
         "v_x": window.real_v_x.copy(),
         "omega": window.real_omega.copy(),
+        "pose": window.real_pose.copy(),
     }
 
 
@@ -122,7 +124,7 @@ def test_window_loss_post_warmup_perturbation_counted():
 
     expected_yaw_contrib = CHANNEL_COEFFS["yaw_rate"] * (0.5**2)
     assert per_channel["yaw_rate"] == pytest.approx(expected_yaw_contrib, rel=1e-9)
-    for ch in ("v_y", "a_x", "v_x", "omega"):
+    for ch in ("v_y", "a_x", "v_x", "omega", "pose"):
         assert per_channel[ch] == pytest.approx(0.0, abs=1e-12)
     assert total == pytest.approx(expected_yaw_contrib, rel=1e-9)
 
@@ -134,14 +136,15 @@ def test_window_loss_total_is_sum_of_per_channel_contribs():
     rng = np.random.default_rng(4)
     w = _make_window(rng)
     sim = _sim_from_real(w)
-    offsets = {"yaw_rate": 0.1, "v_y": 0.2, "a_x": 0.3, "v_x": 0.4, "omega": 1.0}
+    offsets = {"yaw_rate": 0.1, "v_y": 0.2, "a_x": 0.3, "v_x": 0.4, "omega": 1.0, "pose": 0.5}
     for ch, off in offsets.items():
-        sim[ch][WARMUP_STEPS:] += off
+        sim[ch][WARMUP_STEPS:] += off  # broadcasts cleanly onto 2D pose (both columns)
 
     total, per_channel = window_loss(sim, w, CHANNEL_COEFFS, WARMUP_STEPS)
     expected_total = sum(per_channel[ch] for ch in CHANNELS)
     assert total == pytest.approx(expected_total, rel=1e-12)
-    # And each contrib should match coeff * offset^2.
+    # Each contrib matches coeff * offset^2 — for pose, both columns get the same
+    # offset, so every element of (sim - real)^2 equals off^2 → mean is off^2 too.
     for ch, off in offsets.items():
         assert per_channel[ch] == pytest.approx(CHANNEL_COEFFS[ch] * (off**2), rel=1e-9)
 
@@ -151,6 +154,31 @@ def test_window_loss_per_channel_keys_complete():
     w = _make_window(rng)
     _, per_channel = window_loss(_sim_from_real(w), w, CHANNEL_COEFFS, WARMUP_STEPS)
     assert set(per_channel.keys()) == set(CHANNELS)
+
+
+def test_window_loss_pose_channel_joint_mse_2d():
+    """pose is a (N+1, 2) channel: contribution = coeff * mean((sim - real)**2)
+    over all 2(N+1−warmup) elements — equivalently ½ · mean(Δx² + Δy²).
+    Use asymmetric Δx, Δy offsets so the per-axis split would be detectable
+    if anyone collapsed it differently.
+    """
+    rng = np.random.default_rng(10)
+    w = _make_window(rng)
+    sim = _sim_from_real(w)
+    dx, dy = 0.3, 0.7
+    sim["pose"][WARMUP_STEPS:, 0] += dx
+    sim["pose"][WARMUP_STEPS:, 1] += dy
+
+    # Use a non-zero coefficient locally so the test pins the loss math even
+    # if the global default for pose is 0.0 (TODO_TUNE).
+    coeffs = dict(CHANNEL_COEFFS)
+    coeffs["pose"] = 1.0
+    _, per_channel = window_loss(sim, w, coeffs, WARMUP_STEPS)
+
+    expected = 0.5 * (dx**2 + dy**2)  # mean over 2 axes of [dx², dy²]
+    assert per_channel["pose"] == pytest.approx(expected, rel=1e-9)
+    for ch in ("yaw_rate", "v_y", "a_x", "v_x", "omega"):
+        assert per_channel[ch] == pytest.approx(0.0, abs=1e-12)
 
 
 # ---------- dataset_loss ----------
@@ -215,7 +243,7 @@ def test_dataset_loss_aggregates_as_arithmetic_mean():
     contrib1 = CHANNEL_COEFFS["yaw_rate"] * (0.3**2)
     expected_mean = 0.5 * (contrib0 + contrib1)
     assert per_channel["yaw_rate"] == pytest.approx(expected_mean, rel=1e-9)
-    for ch in ("v_y", "a_x", "v_x", "omega"):
+    for ch in ("v_y", "a_x", "v_x", "omega", "pose"):
         assert per_channel[ch] == pytest.approx(0.0, abs=1e-12)
     assert total == pytest.approx(expected_mean, rel=1e-9)
 

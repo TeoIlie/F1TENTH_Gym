@@ -182,6 +182,7 @@ def _debug_to_loss_sim(traces: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "a_x": traces["a_x"],
         "v_x": traces["linear_vel_x"],
         "omega": 0.5 * (traces["omega_front"] + traces["omega_rear"]),
+        "pose": np.stack([traces["pose_x"], traces["pose_y"]], axis=-1),
     }
 
 
@@ -327,6 +328,24 @@ def _plot_rollout_overlay(
     plt.close(fig)
 
 
+def _format_channel_table(per_channel: dict[str, float]) -> list[str]:
+    """Per-channel breakdown as a 3-column table: contribution | raw MSE | coeff.
+
+    `contribution = coeff · raw`, so raw is recovered by division. When
+    `coeff == 0` the channel is plumbed but disabled — raw is not knowable
+    from contribution alone, so it's reported as `n/a`.
+    """
+    header = f"{'channel':<10} {'contribution':>14} {'raw_MSE':>14} {'coeff':>10}"
+    rule = "-" * len(header)
+    lines = [header, rule]
+    for ch in CHANNELS:
+        contrib = per_channel.get(ch, float("nan"))
+        coeff = CHANNEL_COEFFS[ch]
+        raw_str = f"{contrib / coeff:>14.6f}" if coeff != 0.0 else f"{'n/a':>14}"
+        lines.append(f"{ch:<10} {contrib:>14.6f} {raw_str} {coeff:>10.4f}")
+    return lines
+
+
 def _write_metrics(
     out_path: str,
     *,
@@ -356,9 +375,9 @@ def _write_metrics(
         f"dropped_nonfinite: {dataset.n_dropped_nonfinite}",
         "",
         f"total_loss: {total_loss:.6f}",
+        "",
+        *_format_channel_table(per_channel),
     ]
-    for ch in CHANNELS:
-        lines.append(f"contrib/{ch}: {per_channel.get(ch, float('nan')):.6f}")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -382,8 +401,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--mirror",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include mirrored windows (default: True, matches study.py)",
+        default=False,
+        help="Include mirrored windows (default: False, matches study.py)",
     )
     p.add_argument("--out-dir", default=None, help="Default: figures/analysis/sysid/<bag_stem>/")
     return p.parse_args(argv)
@@ -453,8 +472,9 @@ def main(argv: list[str] | None = None) -> int:
     per_channel = {ch: float(np.mean(accum[ch])) for ch in CHANNELS}
 
     print(f"\ntotal_loss = {total_loss:.6f}")
-    for ch in CHANNELS:
-        print(f"  contrib/{ch:>9s} = {per_channel[ch]:.6f}  (coeff={CHANNEL_COEFFS[ch]:.4f})")
+    print()
+    for line in _format_channel_table(per_channel):
+        print(line)
 
     metrics_path = out_dir / "metrics.txt"
     _write_metrics(

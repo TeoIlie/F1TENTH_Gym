@@ -9,7 +9,9 @@ Each Window holds:
     beta, omega_front, omega_rear]`), with wheel angular velocities seeded
     from VESC `rs_core_speed/R_w` (AWD: same scalar to both wheels),
   - the command sequence to replay (cmd_steer, cmd_speed),
-  - the real body-frame signals to score against (v_x, v_y, yaw_rate, a_x).
+  - the real signals to score against: body-frame (v_x, v_y, yaw_rate, a_x),
+    drivetrain anchor (omega = rs_core_speed / R_w), and world-frame pose
+    (x, y) stacked as `(N+1, 2)` for the integrated XY tracking channel.
 
 See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 """
@@ -23,7 +25,7 @@ from scipy.signal import savgol_filter
 
 from examples.analysis.sysid.env import SYSID_PARAMS
 
-CHANNELS = ("yaw_rate", "v_y", "a_x", "v_x", "omega")
+CHANNELS = ("yaw_rate", "v_y", "a_x", "v_x", "omega", "pose")
 
 # init_state layout (9-wide, matches STD's `user_state_lens()` 9-branch):
 #   [x, y, delta, v, yaw, yaw_rate, beta, omega_front, omega_rear]
@@ -32,6 +34,10 @@ CHANNELS = ("yaw_rate", "v_y", "a_x", "v_x", "omega")
 #   positive scalars and stay (a left-mirrored car still spins its wheels
 #   forward at the same rate).
 _MIRROR_INIT_SIGNS = np.array([1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0])
+
+# World-frame pose under L/R mirror: x stays, y flips. Broadcasts over the
+# (N+1, 2) `real_pose` array (column 0 = x, column 1 = y).
+_MIRROR_POSE_SIGNS = np.array([1.0, -1.0])
 
 
 @dataclass(frozen=True)
@@ -45,6 +51,7 @@ class Window:
     real_yaw_rate: np.ndarray
     real_a_x: np.ndarray
     real_omega: np.ndarray  # VESC rs_core_speed/R_w over the window (rad/s)
+    real_pose: np.ndarray  # shape (N+1, 2) — world-frame [x, y] per timestep
     is_mirrored: bool
 
 
@@ -68,6 +75,7 @@ def mirror_window(w: Window) -> Window:
         real_yaw_rate=-w.real_yaw_rate,
         real_a_x=w.real_a_x.copy(),
         real_omega=w.real_omega.copy(),  # wheel speeds are sign-symmetric under L/R mirror
+        real_pose=w.real_pose * _MIRROR_POSE_SIGNS,
         is_mirrored=not w.is_mirrored,
     )
 
@@ -77,7 +85,7 @@ def load_dataset(
     window_length_s: float = 1.5,
     stride_s: float = 0.5,
     min_speed: float = 0.3,
-    mirror: bool = True,
+    mirror: bool = False,
     sg_window: int = 21,
     sg_polyorder: int = 2,
     dt: float = 0.01,
@@ -129,11 +137,12 @@ def load_dataset(
         rr = vicon_r[t0 : end + 1]
         rax = real_a_x_full[t0 : end + 1]
         romega = omega_full[t0 : end + 1]  # romega[0] seeds init_state[7:9] (AWD); full slice is scored.
+        rpose = np.stack([vicon_x[t0 : end + 1], vicon_y[t0 : end + 1]], axis=-1)  # (N+1, 2)
 
         if np.mean(speed_full[t0 : end + 1]) < min_speed:
             n_dropped_low_speed += 1
             continue
-        if not all(np.all(np.isfinite(a)) for a in (rvx, rvy, rr, rax, romega, cmd_s, cmd_v)):
+        if not all(np.all(np.isfinite(a)) for a in (rvx, rvy, rr, rax, romega, rpose, cmd_s, cmd_v)):
             n_dropped_nonfinite += 1
             continue
 
@@ -163,6 +172,7 @@ def load_dataset(
                 real_yaw_rate=rr.astype(float),
                 real_a_x=rax.astype(float),
                 real_omega=romega.astype(float),
+                real_pose=rpose.astype(float),
                 is_mirrored=False,
             )
         )

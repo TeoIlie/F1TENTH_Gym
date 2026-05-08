@@ -183,6 +183,12 @@ if __name__ == "__main__":
     parser.add_argument("--mode", choices=("multiplicative", "absolute"), default="multiplicative")
     parser.add_argument("--deltas", default=None, help=f"CSV deltas (default: {DELTAS_DEFAULT})")
     parser.add_argument("--out-csv", default=None, help="Default: figures/analysis/sysid/sensitivity/<bag>/sweep.csv")
+    parser.add_argument(
+        "--mirror",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="L/R-mirror windows (default: False, matches study.py).",
+    )
     args = parser.parse_args()
 
     deltas = tuple(float(d) for d in args.deltas.split(",")) if args.deltas is not None else DELTAS_DEFAULT
@@ -198,7 +204,7 @@ if __name__ == "__main__":
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading dataset {bag_path}...")
-    ds = load_dataset(str(bag_path))
+    ds = load_dataset(str(bag_path), mirror=args.mirror)
     print(f"  {len(ds.windows)} windows")
     print(f"Sweep: {args.candidates} × {len(deltas)} deltas = {len(candidates) * len(deltas)} evals")
 

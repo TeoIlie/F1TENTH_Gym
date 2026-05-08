@@ -61,8 +61,20 @@ def test_run_returns_correct_shape_and_keys(rollout, dataset):
     assert set(sim.keys()) == set(CHANNELS)
     expected_len = len(dataset.windows[0].real_v_x)
     for ch in CHANNELS:
-        assert sim[ch].shape == (expected_len,), f"{ch} has wrong shape"
+        expected_shape = (expected_len, 2) if ch == "pose" else (expected_len,)
+        assert sim[ch].shape == expected_shape, f"{ch} has wrong shape"
         assert np.all(np.isfinite(sim[ch])), f"{ch} contains non-finite values"
+
+
+def test_run_pose_init_matches_init_state(rollout, dataset):
+    """First pose sample must equal the seeded x,y from init_state — pins that
+    `env.reset(options={'states': ...})` propagates world-frame pose verbatim
+    (otherwise the XY tracking channel would score against a sim that started
+    from somewhere other than the bag's window-start pose).
+    """
+    w = dataset.windows[0]
+    sim = rollout.run(w)
+    np.testing.assert_allclose(sim["pose"][0], w.init_state[:2], rtol=1e-6, atol=1e-8)
 
 
 def test_dt_matches_env_timestep(rollout):
@@ -182,6 +194,7 @@ def test_mirror_invariant_under_default_params(rollout):
         real_yaw_rate=np.zeros(n + 1),
         real_a_x=np.zeros(n + 1),
         real_omega=np.zeros(n + 1),
+        real_pose=np.zeros((n + 1, 2)),
         is_mirrored=False,
     )
     w_mirr = mirror_window(w)
@@ -201,6 +214,9 @@ def test_mirror_invariant_under_default_params(rollout):
     np.testing.assert_allclose(sim_m["yaw_rate"], -sim["yaw_rate"], **tol)
     np.testing.assert_allclose(sim_m["a_x"], sim["a_x"], **tol_ax)
     np.testing.assert_allclose(sim_m["omega"], sim["omega"], **tol)
+    # World-frame pose: x stays, y flips under L/R mirror.
+    np.testing.assert_allclose(sim_m["pose"][:, 0], sim["pose"][:, 0], **tol)
+    np.testing.assert_allclose(sim_m["pose"][:, 1], -sim["pose"][:, 1], **tol)
 
 
 # ---------- NaN/inf guard ----------
@@ -213,7 +229,15 @@ def test_run_raises_on_non_finite_sim_signal(rollout, dataset, monkeypatch):
     """
     w = dataset.windows[0]
     agent_id = rollout._agent_id
-    nan_obs = {agent_id: {"linear_vel_x": float("nan"), "linear_vel_y": 0.0, "ang_vel_z": 0.0}}
+    nan_obs = {
+        agent_id: {
+            "linear_vel_x": float("nan"),
+            "linear_vel_y": 0.0,
+            "ang_vel_z": 0.0,
+            "pose_x": 0.0,
+            "pose_y": 0.0,
+        }
+    }
     fake_step = MagicMock(return_value=(nan_obs, 0.0, False, False, {}))
     monkeypatch.setattr(rollout._env, "step", fake_step)
 

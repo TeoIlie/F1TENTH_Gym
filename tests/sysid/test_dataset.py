@@ -102,6 +102,7 @@ def test_window_shapes(straight_npz):
         assert w.real_yaw_rate.shape == (N_STEPS + 1,)
         assert w.real_a_x.shape == (N_STEPS + 1,)
         assert w.real_omega.shape == (N_STEPS + 1,)
+        assert w.real_pose.shape == (N_STEPS + 1, 2)
         assert w.init_state.shape == (9,)
 
 
@@ -136,8 +137,21 @@ def test_real_signals_match_bag_slice(asymmetric_npz):
         np.testing.assert_allclose(w.real_v_y, data["vicon_body_vy"][i : i + N_STEPS + 1])
         np.testing.assert_allclose(w.real_yaw_rate, data["vicon_r"][i : i + N_STEPS + 1])
         np.testing.assert_allclose(w.real_omega, data["rs_core_speed"][i : i + N_STEPS + 1] / R_W)
+        np.testing.assert_allclose(w.real_pose[:, 0], data["vicon_x"][i : i + N_STEPS + 1])
+        np.testing.assert_allclose(w.real_pose[:, 1], data["vicon_y"][i : i + N_STEPS + 1])
         np.testing.assert_allclose(w.cmd_steer, data["cmd_steer"][i : i + N_STEPS])
         np.testing.assert_allclose(w.cmd_speed, data["cmd_speed"][i : i + N_STEPS])
+
+
+def test_real_pose_first_sample_matches_init_state(asymmetric_npz):
+    """real_pose[0] must equal init_state[:2] — both come from `vicon_x[t0]` /
+    `vicon_y[t0]` but through different code paths (scalar index vs slice). If
+    they ever drift apart, the pose loss would silently score the sim's t=0
+    against a different point than where it was seeded.
+    """
+    ds = load_dataset(asymmetric_npz, mirror=False)
+    for w in ds.windows:
+        np.testing.assert_allclose(w.real_pose[0], w.init_state[:2])
 
 
 def test_real_a_x_is_smoothed_gradient(asymmetric_npz):
@@ -232,6 +246,7 @@ def test_mirror_involution(asymmetric_npz):
     np.testing.assert_allclose(w_mm.real_yaw_rate, w.real_yaw_rate)
     np.testing.assert_allclose(w_mm.real_a_x, w.real_a_x)
     np.testing.assert_allclose(w_mm.real_omega, w.real_omega)
+    np.testing.assert_allclose(w_mm.real_pose, w.real_pose)
     assert w_mm.is_mirrored == w.is_mirrored
 
 
@@ -248,6 +263,7 @@ def test_mirror_sign_flips(asymmetric_npz):
     np.testing.assert_allclose(m.cmd_steer, -w.cmd_steer)
     np.testing.assert_allclose(m.real_v_y, -w.real_v_y)
     np.testing.assert_allclose(m.real_yaw_rate, -w.real_yaw_rate)
+    np.testing.assert_allclose(m.real_pose[:, 1], -w.real_pose[:, 1])
     # Preserved: x, v on init_state; cmd_speed; v_x, a_x signals.
     assert m.init_state[0] == pytest.approx(w.init_state[0])
     assert m.init_state[3] == pytest.approx(w.init_state[3])
@@ -255,6 +271,7 @@ def test_mirror_sign_flips(asymmetric_npz):
     np.testing.assert_allclose(m.real_v_x, w.real_v_x)
     np.testing.assert_allclose(m.real_a_x, w.real_a_x)
     np.testing.assert_allclose(m.real_omega, w.real_omega)
+    np.testing.assert_allclose(m.real_pose[:, 0], w.real_pose[:, 0])
     # Wheel angular speeds are positive scalars, sign-symmetric under L/R mirror.
     assert m.init_state[7] == pytest.approx(w.init_state[7])
     assert m.init_state[8] == pytest.approx(w.init_state[8])
