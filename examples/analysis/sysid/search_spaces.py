@@ -22,7 +22,8 @@ STAGE1_SPACE: dict[str, BaseDistribution] = {
     "tire_p_cy1": FloatDistribution(low=0.34, high=2.36),
     "tire_p_cx1": FloatDistribution(low=1.03, high=2.26),
     "tire_p_ky1": FloatDistribution(low=-80.0, high=-15.0),
-    # T_steer added here (single line) if the sensitivity follow-up promotes it.
+    "sv_max": FloatDistribution(low=2.0, high=8.0),  # sv_min mirrored to -sv_max via SYMMETRIC_PAIRS
+    "T_steer": FloatDistribution(low=0.005, high=0.10, log=True),
 }
 
 STAGE2_SPACE: dict[str, BaseDistribution] = {
@@ -35,6 +36,12 @@ STAGE2_SPACE: dict[str, BaseDistribution] = {
 STAGE_SPACES: dict[int, dict[str, BaseDistribution]] = {1: STAGE1_SPACE, 2: STAGE2_SPACE}
 
 
+# Keys whose sampled value is negated and written into a partner key, so CMA-ES
+# can search a single dimension while a physical symmetry constraint
+# (sv_min == -sv_max) is enforced exactly on every trial.
+SYMMETRIC_PAIRS: dict[str, str] = {"sv_max": "sv_min"}
+
+
 def apply_trial_params(base_params: dict, trial_values: dict[str, float]) -> dict:
     """Return ``deepcopy(base_params)`` with ``trial_values`` overlaid.
 
@@ -43,6 +50,9 @@ def apply_trial_params(base_params: dict, trial_values: dict[str, float]) -> dic
     out = deepcopy(base_params)
     for name, value in trial_values.items():
         out[name] = value
+        partner = SYMMETRIC_PAIRS.get(name)
+        if partner is not None:
+            out[partner] = -value
     return out
 
 
