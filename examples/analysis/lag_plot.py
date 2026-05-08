@@ -6,13 +6,9 @@ from gymkhana.envs.gymkhana_env import GKEnv
 from train.config.env_config import get_drift_test_config, get_env_id
 
 
-def make_env(long_act_type, t_steer: float = 0.025):
+def make_env(long_act_type):
     config = get_drift_test_config()
-    params = GKEnv.f1tenth_vehicle_params()
-    # f1tenth_st.yaml has T_steer commented out (defaults to 0 → bang-bang),
-    # so inject it explicitly to exercise the first-order lag path.
-    params["T_steer"] = t_steer
-    config["params"] = params
+    config["params"] = GKEnv.f1tenth_vehicle_params()
     config["map"] = "Spielberg_blank"
     config["model"] = "st"
     config["normalize_act"] = False
@@ -32,8 +28,8 @@ def make_env(long_act_type, t_steer: float = 0.025):
     return env
 
 
-def run_lag_test(env, action, obs_key, target, extra_steps):
-    env.reset()
+def run_lag_test(long_act_type, action, obs_key, target, extra_steps):
+    env = make_env(long_act_type)
 
     curr = 0.0
     traj = [curr]
@@ -50,13 +46,16 @@ def run_lag_test(env, action, obs_key, target, extra_steps):
         traj.append(curr)
         env.render()
 
-    return np.asarray(traj)
+    env.close()
+
+    plt.plot(traj)
+    plt.show()
 
 
-def steer_lag(env):
+def steer_lag():
     target = 0.4189
-    return run_lag_test(
-        env=env,
+    run_lag_test(
+        long_act_type="accl",
         action=np.array([[target, 0.0]]),
         obs_key="delta",
         target=target,
@@ -64,10 +63,10 @@ def steer_lag(env):
     )
 
 
-def accl_lag(env):
+def accl_lag():
     target = 19.0
-    return run_lag_test(
-        env=env,
+    run_lag_test(
+        long_act_type="accl",
         action=np.array([[0.0, 9.51]]),
         obs_key="linear_vel_x",
         target=target,
@@ -75,10 +74,10 @@ def accl_lag(env):
     )
 
 
-def vel_lag(env):
+def vel_lag():
     target = 19.0
-    return run_lag_test(
-        env=env,
+    run_lag_test(
+        long_act_type="speed",
         action=np.array([[0.0, target]]),
         obs_key="linear_vel_x",
         target=target,
@@ -86,33 +85,8 @@ def vel_lag(env):
     )
 
 
-def t_steer_bug_demo():
-    """Reuse one env across a configure() call that changes T_steer.
+steer_lag()
 
-    With the bug present (cached self.k in SteeringAngleAction), both runs
-    produce identical trajectories. After the fix, the second run should
-    rise noticeably slower (larger T_steer → slower first-order response).
-    """
-    t_steer_initial = 0.025
-    t_steer_changed = 0.2
+# accl_lag()
 
-    env = make_env("accl", t_steer=t_steer_initial)
-
-    traj1 = steer_lag(env)
-    env.unwrapped.configure(config={"params": {"T_steer": t_steer_changed}})
-    traj2 = steer_lag(env)
-
-    plt.figure()
-    plt.plot(traj1, label=f"T_steer={t_steer_initial}")
-    plt.plot(traj2, label=f"T_steer={t_steer_changed} (after configure)")
-    plt.axhline(0.4189, color="k", linestyle="--", linewidth=0.5, label="target")
-    plt.xlabel("step")
-    plt.ylabel("delta [rad]")
-    plt.title("T_steer bug: identical curves = bug present, divergent = fixed")
-    plt.legend()
-    plt.show()
-
-    return env
-
-
-t_steer_bug_demo()
+# vel_lag()
