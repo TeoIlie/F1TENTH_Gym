@@ -11,7 +11,7 @@ maintained — bounds come from the report + physical priors.
 Usage::
 
     python -m examples.analysis.sysid.sensitivity \\
-        --path examples/analysis/bags/<bag>.npz \\
+        --bag examples/analysis/bags/<bag>.npz \\
         [--candidates stage12|vehicle_dyn|frozen] \\
         [--mode multiplicative|absolute] \\
         [--deltas -0.5,-0.25,0,0.25,0.5]
@@ -99,6 +99,7 @@ def run_sweep(
     deltas: Sequence[float] = DELTAS_DEFAULT,
     mode: str = "multiplicative",
     allow_frozen: bool = False,
+    progress: bool = True,
 ) -> list[SweepRow]:
     """Sweep each candidate's value across `deltas`; return one row per (param, delta).
 
@@ -118,8 +119,12 @@ def run_sweep(
     rows: list[SweepRow] = []
     baseline_total: float | None = None
 
+    n_params = len(candidates)
+    n_deltas = len(deltas_tuple)
     try:
-        for name in candidates:
+        for i, name in enumerate(candidates, start=1):
+            if progress:
+                print(f"  [{i}/{n_params}] {name} ({n_deltas} deltas)...", flush=True)
             for delta in deltas_tuple:
                 params = _perturbed_params(base_params, name, delta, mode)
                 rollout.set_params(params)
@@ -178,7 +183,7 @@ if __name__ == "__main__":
     from examples.analysis.sysid.dataset import load_dataset
 
     parser = argparse.ArgumentParser(description="Sysid sensitivity sweep")
-    parser.add_argument("--path", required=True, help="Path to NPZ bag")
+    parser.add_argument("--bag", required=True, help="Path to NPZ bag")
     parser.add_argument("--candidates", choices=tuple(CANDIDATE_GROUPS), default="stage12")
     parser.add_argument("--mode", choices=("multiplicative", "absolute"), default="multiplicative")
     parser.add_argument("--deltas", default=None, help=f"CSV deltas (default: {DELTAS_DEFAULT})")
@@ -195,7 +200,7 @@ if __name__ == "__main__":
     candidates = CANDIDATE_GROUPS[args.candidates]
     allow_frozen = args.candidates == "frozen"
 
-    bag_path = Path(args.path).resolve()
+    bag_path = Path(args.bag).resolve()
     out_csv = (
         Path(args.out_csv)
         if args.out_csv
