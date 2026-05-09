@@ -14,6 +14,7 @@ from examples.analysis.sysid.search_spaces import (
     STAGE1_SPACE,
     STAGE2_SPACE,
     STAGE_SPACES,
+    SYMMETRIC_PAIRS,
     apply_trial_params,
 )
 from examples.analysis.sysid.sensitivity import FROZEN_PARAMS
@@ -60,9 +61,11 @@ def test_apply_trial_params_overlays_full_dict():
     base = dict(SYSID_PARAMS)
     trial = {name: 0.5 for name in STAGE1_SPACE}
     out = apply_trial_params(base, trial)
-    # All non-search-space keys preserved.
+    # All non-search-space keys preserved, except symmetric partners which mirror their pair.
     for k, v in SYSID_PARAMS.items():
         if k in STAGE1_SPACE:
             assert out[k] == 0.5
+        elif k in SYMMETRIC_PAIRS.values():
+            assert out[k] == -0.5
         else:
             assert out[k] == v

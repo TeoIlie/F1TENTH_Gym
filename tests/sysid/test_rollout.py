@@ -1,7 +1,9 @@
 """Integration tests for examples.analysis.sysid.rollout.
 
-These tests construct a real GKEnv per module (slow) and replay windows
-loaded from a real bag. Coverage:
+These tests construct a real GKEnv per module (slow) and replay synthetic
+windows — a constant-steer / constant-speed input at moderate speed that
+exercises the full STD dynamic regime without depending on a recorded bag
+(which is unavailable in CI). Coverage:
   - shape/key contract returned by `Rollout.run`
   - dt property matches env timestep
   - first sample of sim signals matches Window.init_state (reset works)
@@ -19,31 +21,64 @@ loaded from a real bag. Coverage:
 from __future__ import annotations
 
 import dataclasses
-import os
 from copy import deepcopy
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
-from examples.analysis.sysid.dataset import CHANNELS, Window, load_dataset, mirror_window
+from examples.analysis.sysid.dataset import CHANNELS, Dataset, Window, mirror_window
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.loss import dataset_loss
 from examples.analysis.sysid.rollout import Rollout
 from gymkhana.envs.gymkhana_env import GKEnv
 
-BAG_PATH = "examples/analysis/bags/circle_Apr6_100Hz.npz"
 DT = 0.01
 
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(BAG_PATH),
-    reason=f"requires test bag {BAG_PATH}",
-)
+
+def _make_synthetic_window(n: int = 150, v: float = 3.0, steer: float = 0.15) -> Window:
+    """Constant-steer / constant-speed window at moderate speed.
+
+    Sized to clear the dataset_loss warmup (warmup_s=0.2 → 20 steps at dt=0.01).
+    Sits above STD's kinematic-dynamic blend so set_params perturbations and
+    the L/R mirror invariant exercise dynamic-regime tire forces. The real_*
+    arrays are zeros: every assertion in this module is on sim shapes, sim
+    init-state propagation, sim determinism, sim a_x = ∂v_x, hot-swap effect
+    on sim, the NaN guard (with a mocked step), or sim-vs-zero finiteness in
+    dataset_loss — none depend on real-trajectory values.
+    """
+    omega0 = v / SYSID_PARAMS["R_w"]
+    return Window(
+        t0_idx=0,
+        init_state=np.array([0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, omega0, omega0]),
+        cmd_steer=np.full(n, steer),
+        cmd_speed=np.full(n, v),
+        real_v_x=np.zeros(n + 1),
+        real_v_y=np.zeros(n + 1),
+        real_yaw_rate=np.zeros(n + 1),
+        real_a_x=np.zeros(n + 1),
+        real_omega=np.zeros(n + 1),
+        real_pose=np.zeros((n + 1, 2)),
+        real_yaw=np.zeros(n + 1),
+        real_beta=np.zeros(n + 1),
+        is_mirrored=False,
+    )
 
 
 @pytest.fixture(scope="module")
-def dataset():
-    return load_dataset(BAG_PATH, mirror=False)
+def window() -> Window:
+    return _make_synthetic_window()
+
+
+@pytest.fixture(scope="module")
+def dataset(window) -> Dataset:
+    return Dataset(
+        windows=[window],
+        dt=DT,
+        n_candidates=1,
+        n_dropped_low_speed=0,
+        n_dropped_nonfinite=0,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -56,45 +91,43 @@ def rollout():
 # ---------- shape / dt / init-state correctness ----------
 
 
-def test_run_returns_correct_shape_and_keys(rollout, dataset):
-    sim = rollout.run(dataset.windows[0])
+def test_run_returns_correct_shape_and_keys(rollout, window):
+    sim = rollout.run(window)
     assert set(sim.keys()) == set(CHANNELS)
-    expected_len = len(dataset.windows[0].real_v_x)
+    expected_len = len(window.real_v_x)
     for ch in CHANNELS:
         expected_shape = (expected_len, 2) if ch == "pose" else (expected_len,)
         assert sim[ch].shape == expected_shape, f"{ch} has wrong shape"
         assert np.all(np.isfinite(sim[ch])), f"{ch} contains non-finite values"
 
 
-def test_run_pose_init_matches_init_state(rollout, dataset):
+def test_run_pose_init_matches_init_state(rollout, window):
     """First pose sample must equal the seeded x,y from init_state — pins that
     `env.reset(options={'states': ...})` propagates world-frame pose verbatim
     (otherwise the XY tracking channel would score against a sim that started
-    from somewhere other than the bag's window-start pose).
+    from somewhere other than the window-start pose).
     """
-    w = dataset.windows[0]
-    sim = rollout.run(w)
-    np.testing.assert_allclose(sim["pose"][0], w.init_state[:2], rtol=1e-6, atol=1e-8)
+    sim = rollout.run(window)
+    np.testing.assert_allclose(sim["pose"][0], window.init_state[:2], rtol=1e-6, atol=1e-8)
 
 
 def test_dt_matches_env_timestep(rollout):
     assert rollout.dt == pytest.approx(DT)
 
 
-def test_initial_sample_reflects_init_state(rollout, dataset):
+def test_initial_sample_reflects_init_state(rollout, window):
     """First sample of sim signals must match Window.init_state — confirms
     `env.reset(options={'states': ...})` actually applies the requested state.
     standard_state for STD sets v_x = v*cos(β), v_y = v*sin(β), yaw_rate = state[5].
     """
-    w = dataset.windows[0]
-    sim = rollout.run(w)
-    v, beta = w.init_state[3], w.init_state[6]
-    assert sim["yaw_rate"][0] == pytest.approx(w.init_state[5], rel=1e-4, abs=1e-5)
+    sim = rollout.run(window)
+    v, beta = window.init_state[3], window.init_state[6]
+    assert sim["yaw_rate"][0] == pytest.approx(window.init_state[5], rel=1e-4, abs=1e-5)
     assert sim["v_x"][0] == pytest.approx(v * np.cos(beta), rel=1e-4, abs=1e-5)
     assert sim["v_y"][0] == pytest.approx(v * np.sin(beta), rel=1e-4, abs=1e-5)
 
 
-def test_reset_seeds_wheel_omegas_from_init_state(rollout, dataset):
+def test_reset_seeds_wheel_omegas_from_init_state(rollout, window):
     """End-to-end contract: a 9-wide init_state with extreme omegas must land
     verbatim in agent.state[7:8] after reset, with no recomputation from v.
 
@@ -103,14 +136,13 @@ def test_reset_seeds_wheel_omegas_from_init_state(rollout, dataset):
     silently revert to the no-slip formula and every sysid test would still
     pass (downstream sim signals would just be wrong, not asserted-against).
     """
-    w = dataset.windows[0]
     # Use a value that the no-slip formula provably could not produce —
-    # 5x the reasonable steady-state omega for any speed in the bag.
+    # ~30x the steady-state omega for the synthetic window's 3 m/s.
     extreme_omega = 100.0
-    seeded = w.init_state.copy()
+    seeded = window.init_state.copy()
     seeded[7] = extreme_omega
     seeded[8] = extreme_omega + 1.0  # different value to also pin index ordering
-    w_seeded = dataclasses.replace(w, init_state=seeded)
+    w_seeded = dataclasses.replace(window, init_state=seeded)
 
     rollout._env.reset(options={"states": w_seeded.init_state.reshape(1, 9)})
     agent_state = rollout._env.sim.agents[0].state
@@ -121,14 +153,13 @@ def test_reset_seeds_wheel_omegas_from_init_state(rollout, dataset):
 # ---------- determinism ----------
 
 
-def test_run_is_deterministic(rollout, dataset):
+def test_run_is_deterministic(rollout, window):
     """Sampler-determinism invariant from OVERVIEW.md — same input must yield
     bit-identical output, otherwise trial-to-trial noise masquerades as a bad
     parameter.
     """
-    w = dataset.windows[0]
-    sim_a = rollout.run(w)
-    sim_b = rollout.run(w)
+    sim_a = rollout.run(window)
+    sim_b = rollout.run(window)
     for ch in CHANNELS:
         np.testing.assert_array_equal(sim_a[ch], sim_b[ch], err_msg=f"non-deterministic on {ch}")
 
@@ -136,8 +167,8 @@ def test_run_is_deterministic(rollout, dataset):
 # ---------- a_x derivation ----------
 
 
-def test_a_x_is_finite_diff_of_v_x(rollout, dataset):
-    sim = rollout.run(dataset.windows[0])
+def test_a_x_is_finite_diff_of_v_x(rollout, window):
+    sim = rollout.run(window)
     expected_a_x = np.gradient(sim["v_x"], DT)
     np.testing.assert_array_equal(sim["a_x"], expected_a_x)
 
@@ -145,20 +176,19 @@ def test_a_x_is_finite_diff_of_v_x(rollout, dataset):
 # ---------- set_params ----------
 
 
-def test_set_params_changes_output(rollout, dataset):
+def test_set_params_changes_output(rollout, window):
     """Hot-swap must actually rebuild the simulator's params; otherwise every
     Optuna trial would silently score the same baseline rollout.
     """
-    w = dataset.windows[0]
     base_params = GKEnv.f1tenth_std_vehicle_params()
-    sim_base = rollout.run(w)
+    sim_base = rollout.run(window)
 
     # Halve the lateral peak factor — should perceptibly change v_y / yaw_rate.
     perturbed = deepcopy(base_params)
     perturbed["tire_p_dy1"] = base_params["tire_p_dy1"] * 0.5
     rollout.set_params(perturbed)
     try:
-        sim_perturbed = rollout.run(w)
+        sim_perturbed = rollout.run(window)
     finally:
         rollout.set_params(base_params)  # restore for downstream tests
 
@@ -171,37 +201,20 @@ def test_set_params_changes_output(rollout, dataset):
 # ---------- mirror invariant ----------
 
 
-def test_mirror_invariant_under_default_params(rollout):
+def test_mirror_invariant_under_default_params(rollout, window):
     """OVERVIEW.md mirror invariant — under STD's structural L/R symmetry,
     a mirrored window must produce sim signals that are sign-flipped on
     antisymmetric channels (yaw_rate, v_y) and identical on symmetric ones
     (v_x, a_x). Catches sign bugs in mirror_window or any future per-channel
     handling in run().
 
-    Uses a synthetic constant-steer / constant-speed window at moderate
-    speed so the test exercises the dynamic regime cleanly. Real-bag windows
-    at <1 m/s sit in STD's kinematic-dynamic blend where the invariant breaks
-    down numerically and is not informative.
+    The synthetic constant-steer / constant-speed window at 3 m/s exercises
+    the dynamic regime cleanly — well above STD's kinematic-dynamic blend
+    (<1 m/s) where the invariant breaks down numerically.
     """
-    n = 150
-    w = Window(
-        t0_idx=0,
-        init_state=np.array([0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 3.0 / SYSID_PARAMS["R_w"], 3.0 / SYSID_PARAMS["R_w"]]),
-        cmd_steer=np.full(n, 0.15),
-        cmd_speed=np.full(n, 3.0),
-        real_v_x=np.zeros(n + 1),  # unused for this test
-        real_v_y=np.zeros(n + 1),
-        real_yaw_rate=np.zeros(n + 1),
-        real_a_x=np.zeros(n + 1),
-        real_omega=np.zeros(n + 1),
-        real_pose=np.zeros((n + 1, 2)),
-        real_yaw=np.zeros(n + 1),
-        real_beta=np.zeros(n + 1),
-        is_mirrored=False,
-    )
-    w_mirr = mirror_window(w)
+    w_mirr = mirror_window(window)
 
-    sim = rollout.run(w)
+    sim = rollout.run(window)
     sim_m = rollout.run(w_mirr)
 
     # Float32 obs precision + float64 integrator picking up small L/R numerical
@@ -227,12 +240,11 @@ def test_mirror_invariant_under_default_params(rollout):
 # ---------- NaN/inf guard ----------
 
 
-def test_run_raises_on_non_finite_sim_signal(rollout, dataset, monkeypatch):
+def test_run_raises_on_non_finite_sim_signal(rollout, window, monkeypatch):
     """Trial params can drive the integrator non-finite. The guard must raise
     so the Optuna objective can map this to a prunable trial loss instead of
     silently returning NaN.
     """
-    w = dataset.windows[0]
     agent_id = rollout._agent_id
     nan_obs = {
         agent_id: {
@@ -249,7 +261,7 @@ def test_run_raises_on_non_finite_sim_signal(rollout, dataset, monkeypatch):
     monkeypatch.setattr(rollout._env, "step", fake_step)
 
     with pytest.raises(FloatingPointError, match="Non-finite sim signal"):
-        rollout.run(w)
+        rollout.run(window)
 
 
 # ---------- context manager ----------
