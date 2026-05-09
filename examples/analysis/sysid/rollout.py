@@ -65,7 +65,7 @@ class Rollout:
         return self._dt
 
     def set_params(self, params: dict) -> None:
-        self._env.configure({"params": params})
+        self._env.update_params(params)
 
     def close(self) -> None:
         self._env.close()

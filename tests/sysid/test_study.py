@@ -20,7 +20,7 @@ import yaml
 from examples.analysis.sysid.dataset import load_dataset
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.rollout import Rollout
-from examples.analysis.sysid.search_spaces import STAGE1_SPACE
+from examples.analysis.sysid.search_spaces import STAGE1_SPACE, SYMMETRIC_PAIRS
 from examples.analysis.sysid.study import Objective, build_study, dump_best_params
 
 BAG_PATH = "examples/analysis/bags/circle_Apr6_100Hz.npz"
@@ -105,9 +105,15 @@ def test_dump_best_params_round_trip(tmp_path, dataset, rollout):
     # Search-space keys equal study.best_params.
     for k, v in study.best_params.items():
         assert loaded[k] == pytest.approx(v)
-    # Non-search-space keys equal SYSID_PARAMS.
+    # Symmetric-pair partners are derived (negated) from their search-space key,
+    # not preserved from SYSID_PARAMS. Verify the symmetry constraint holds.
+    for src, partner in SYMMETRIC_PAIRS.items():
+        if src in study.best_params:
+            assert loaded[partner] == pytest.approx(-study.best_params[src])
+    # Remaining (truly untouched) keys equal SYSID_PARAMS.
+    overlaid = set(STAGE1_SPACE) | {p for s, p in SYMMETRIC_PAIRS.items() if s in study.best_params}
     for k, v in SYSID_PARAMS.items():
-        if k not in STAGE1_SPACE:
+        if k not in overlaid:
             assert loaded[k] == v
 
 
