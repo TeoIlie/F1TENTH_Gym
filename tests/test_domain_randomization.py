@@ -67,29 +67,29 @@ def test_no_dr_baseline(env1):
 def test_reproducibility_and_multi_param_independence(env1):
     """2. Reproducibility + multi-param independence.
 
-    Same seed twice ⇒ identical multipliers; m and lf get independent draws.
+    Same seed twice ⇒ identical multipliers; m and I get independent draws.
 
     Reproducibility-across-envs reduces to reproducibility-across-resets-on-one-env
     because DR draws come solely from the global ``np.random`` stream, which
     is seeded at the top of ``reset()``. Construction-time RNG never touches
     the DR draws.
     """
-    env1.dr_sigmas = {"m": 0.05, "lf": 0.05}
+    env1.dr_sigmas = {"m": 0.05, "I": 0.05}
     env1.dr_clip_k = 3.0
-    base_m, base_lf = env1._base_params["m"], env1._base_params["lf"]
+    base_m, base_I = env1._base_params["m"], env1._base_params["I"]
 
     def collect():
         out = []
         for s in range(20):
             env1.reset(seed=s)
             p = env1.sim.agents[0].params
-            out.append((p["m"] / base_m, p["lf"] / base_lf))
+            out.append((p["m"] / base_m, p["I"] / base_I))
         return np.asarray(out)
 
     pass1, pass2 = collect(), collect()
     np.testing.assert_array_equal(pass1, pass2)  # reproducibility
-    # Independence: m and lf within the same reset must not be the same draw.
-    assert not np.allclose(pass1[:, 0], pass1[:, 1]), "m and lf share an RNG draw"
+    # Independence: m and I within the same reset must not be the same draw.
+    assert not np.allclose(pass1[:, 0], pass1[:, 1]), "m and I share an RNG draw"
 
 
 def test_sigma_is_std_dev(env1):
@@ -227,6 +227,94 @@ def test_train_configs_have_dr_eval_configs_do_not():
         assert not cfg.get("domain_randomization"), (
             f"{getter.__name__} leaks DR into eval: {cfg.get('domain_randomization')}"
         )
+
+
+def test_lf_perturbation_preserves_wheelbase(env1):
+    """`lf` randomization: `lf + lr` stays exactly equal to base wheelbase."""
+    sigma = 0.05
+    env1.dr_sigmas = {"lf": sigma}
+    env1.dr_clip_k = 3.0
+    L_base = env1._base_params["lf"] + env1._base_params["lr"]
+    lf_mults = []
+    for s in range(200):
+        env1.reset(seed=s)
+        p = env1.sim.agents[0].params
+        assert p["lf"] + p["lr"] == L_base, f"wheelbase drift: {p['lf'] + p['lr']} vs {L_base}"
+        lf_mults.append(p["lf"] / env1._base_params["lf"])
+    lf_mults = np.asarray(lf_mults)
+    assert abs(lf_mults.mean() - 1.0) < 0.05
+    assert abs(lf_mults.std() - sigma) / sigma < 0.20
+
+
+def test_s_max_perturbation_mirrors_s_min(env1):
+    """`s_max` randomization: `s_min == -s_max` exactly each reset."""
+    sigma = 0.05
+    env1.dr_sigmas = {"s_max": sigma}
+    env1.dr_clip_k = 3.0
+    s_max_mults = []
+    for s in range(200):
+        env1.reset(seed=s)
+        p = env1.sim.agents[0].params
+        assert p["s_min"] == -p["s_max"], f"asymmetry: {p['s_min']} vs {-p['s_max']}"
+        s_max_mults.append(p["s_max"] / env1._base_params["s_max"])
+    s_max_mults = np.asarray(s_max_mults)
+    assert abs(s_max_mults.mean() - 1.0) < 0.05
+    assert abs(s_max_mults.std() - sigma) / sigma < 0.20
+
+
+def test_sv_max_perturbation_mirrors_sv_min(env1):
+    """`sv_max` randomization: `sv_min == -sv_max` exactly each reset."""
+    sigma = 0.05
+    env1.dr_sigmas = {"sv_max": sigma}
+    env1.dr_clip_k = 3.0
+    sv_max_mults = []
+    for s in range(200):
+        env1.reset(seed=s)
+        p = env1.sim.agents[0].params
+        assert p["sv_min"] == -p["sv_max"], f"asymmetry: {p['sv_min']} vs {-p['sv_max']}"
+        sv_max_mults.append(p["sv_max"] / env1._base_params["sv_max"])
+    sv_max_mults = np.asarray(sv_max_mults)
+    assert abs(sv_max_mults.mean() - 1.0) < 0.05
+    assert abs(sv_max_mults.std() - sigma) / sigma < 0.20
+
+
+def _make_env_with_dr(dr_config=None, dr_clip_k=3.0):
+    """Construct an env with a custom DR config. Used by validation tests
+    that need to assert construction itself raises — cannot reuse the
+    module-scoped fixtures because validation runs in __init__."""
+    config = {
+        "map": "Spielberg",
+        "num_agents": 1,
+        "observation_config": {"type": None},
+        "reset_config": {"type": "rl_random_static"},
+        "domain_randomization": dr_config,
+        "dr_clip_k": dr_clip_k,
+    }
+    return gym.make("gymkhana:gymkhana-v0", config=config).unwrapped
+
+
+def test_validation_rejects_unknown_param():
+    with pytest.raises(ValueError, match="not a vehicle parameter"):
+        _make_env_with_dr(dr_config={"mass": 0.05})
+
+
+@pytest.mark.parametrize("name,canonical", [("lr", "lf"), ("s_min", "s_max"), ("sv_min", "sv_max")])
+def test_validation_rejects_forbidden_param(name, canonical):
+    with pytest.raises(ValueError, match=f"randomize '{canonical}' instead"):
+        _make_env_with_dr(dr_config={name: 0.05})
+
+
+@pytest.mark.parametrize("bad_sigma", [0, 0.0, -0.01, 0.2, 0.5, 1.0])
+def test_validation_rejects_out_of_range_sigma(bad_sigma):
+    with pytest.raises(ValueError, match="sigma for"):
+        _make_env_with_dr(dr_config={"m": bad_sigma})
+
+
+def test_validation_accepts_valid_dr_config():
+    """Sanity: a well-formed DR config builds without error."""
+    env = _make_env_with_dr(dr_config={"m": 0.05, "I": 0.1}, dr_clip_k=2.5)
+    assert env.dr_sigmas == {"m": 0.05, "I": 0.1}
+    assert env.dr_clip_k == 2.5
 
 
 if __name__ == "__main__":
