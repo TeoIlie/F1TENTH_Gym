@@ -21,6 +21,8 @@ This repository contains a custom gym environment for training Deep Reinforcemen
 - [Training](#training)
   - [Wandb](#wandb)
   - [ONNX Policy Conversion](#onnx-policy-conversion)
+- [Sim2Real Transfer](#sim2real-transfer)
+  - [Domain Randomization](#domain-randomization)
 - [Configuration](#configuration)
   - [Default Gym/RL configurations](#default-gymrl-configurations)
   - [Callback and Curriculum Learning (CL) configuration](#callback-and-curriculum-learning-cl-configuration)
@@ -138,6 +140,26 @@ Run the policy with ONNX using `OnnxPolicyRunner` defined in `gymkhana/inference
 ```bash
 python3 train/ppo_race.py --m x --path <ONNX model path>
 ```
+
+## Sim2Real Transfer
+
+Tools for narrowing the gap between simulated training and real-vehicle deployment.
+
+### Domain Randomization
+
+At each reset, selected vehicle parameters are perturbed by multiplicative Gaussian noise `θ' = θ · X`, `X ~ N(1, σ)`, clipped at `±dr_clip_k·σ` (default `3.0`). Configured via the `domain_randomization` gym key as a flat `{param: sigma}` dict (σ in `(0, 0.2)`); absent or `None` disables DR. Train configs (`get_drift_train_config`, `get_recovery_train_config`) inject DR from `train/config/gym_config.yaml`; eval always uses nominal parameters.
+
+```yaml
+# train/config/gym_config.yaml
+domain_randomization:
+  m: 0.05         # mass
+  I_z: 0.02       # yaw inertia
+  lf: 0.05        # CoG fore-distance; lr auto-tracks (wheelbase preserved)
+  s_max: 0.03     # max steering angle; s_min auto-mirrors
+  sv_max: 0.02    # max steering velocity; sv_min auto-mirrors
+```
+
+For coupled pairs, randomize only the canonical member (`lf`, `s_max`, `sv_max`). The derived partner (`lr`, `s_min`, `sv_min`) is recomputed each reset; listing it raises `ValueError` pointing to the canonical key.
 
 ## Configuration
 

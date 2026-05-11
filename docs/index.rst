@@ -46,6 +46,7 @@ See :doc:`installation` to get started.
 
    configuration
    training
+   sim2real
    architecture
    controllers
    analysis
