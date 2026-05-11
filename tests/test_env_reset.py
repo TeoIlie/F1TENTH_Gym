@@ -418,10 +418,56 @@ class TestFullStateReset(unittest.TestCase):
 
     def test_wrong_state_shape_error(self):
         """Test that wrong state shape raises clear error."""
-        wrong_states = np.array([[0.0, 0.0, 0.0]])  # Only 3 elements instead of 7
+        wrong_states = np.array([[0.0, 0.0, 0.0]])  # Only 3 elements instead of 7 or 9
 
         with self.assertRaises(ValueError):
             self.env.reset(options={"states": wrong_states})
+
+        # Width 8 is not in the accepted set (7, 9) for STD either.
+        wrong_states_8 = np.zeros((1, 8))
+        with self.assertRaises(ValueError):
+            self.env.reset(options={"states": wrong_states_8})
+
+    def test_full_state_reset_std_9_elements(self):
+        """Test full 9-element state initialization preserves wheel angular velocities."""
+        # State: [x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]
+        # Use wheel speeds that intentionally do NOT match the no-slip formula
+        # so we can be sure they are taken as-given.
+        omega_f_user = 123.0
+        omega_r_user = 456.0
+        states = np.array([[1.0, 2.0, 0.1, 5.0, np.pi / 4, 0.5, 0.05, omega_f_user, omega_r_user]])
+        self.env.reset(options={"states": states})
+
+        state = self.env.unwrapped.sim.agents[0].state
+        self.assertAlmostEqual(state[0], 1.0, places=5)
+        self.assertAlmostEqual(state[1], 2.0, places=5)
+        self.assertAlmostEqual(state[2], 0.1, places=5)
+        self.assertAlmostEqual(state[3], 5.0, places=5)
+        self.assertAlmostEqual(state[4], np.pi / 4, places=5)
+        self.assertAlmostEqual(state[5], 0.5, places=5)
+        self.assertAlmostEqual(state[6], 0.05, places=5)
+        # Wheel speeds taken as given, NOT re-derived from no-slip formula.
+        self.assertAlmostEqual(state[7], omega_f_user, places=5)
+        self.assertAlmostEqual(state[8], omega_r_user, places=5)
+
+    def test_9_element_preserves_wheel_speeds_under_velocity_clamp(self):
+        """When v is clamped, the explicit wheel speeds are still taken as given.
+
+        Documents the contract that the caller owns consistency between v and
+        omega_{f,r} when supplying a 9-wide row.
+        """
+        params = self.env.unwrapped.params
+        # Pick a velocity outside the [v_min, v_max] window so it gets clamped.
+        v_request = params["v_max"] + 100.0
+        omega_f_user = 7.0
+        omega_r_user = 11.0
+        states = np.array([[0.0, 0.0, 0.0, v_request, 0.0, 0.0, 0.0, omega_f_user, omega_r_user]])
+        self.env.reset(options={"states": states})
+
+        state = self.env.unwrapped.sim.agents[0].state
+        self.assertAlmostEqual(state[3], params["v_max"], places=5)  # clamped
+        self.assertAlmostEqual(state[7], omega_f_user, places=5)  # unchanged
+        self.assertAlmostEqual(state[8], omega_r_user, places=5)  # unchanged
 
     def test_wrong_num_agents_error(self):
         """Test that wrong number of agents in states raises error."""
@@ -601,6 +647,25 @@ class TestSimulationContinuation(unittest.TestCase):
         restored_state = self.env.unwrapped.sim.agents[0].state[:7]
         np.testing.assert_array_almost_equal(restored_state, captured_state, decimal=5)
 
+    def test_round_trip_full_9_state_preservation(self):
+        """Full 9-wide round trip: run -> capture all 9 -> reset(9-wide) -> all 9 match.
+
+        This is the sysid/replay use case — capturing wheel speeds out of a
+        running sim and re-injecting them so the next rollout starts from the
+        exact same dynamical state, not a no-slip approximation of it.
+        """
+        self.env.reset()
+        for _ in range(10):
+            action = self.env.action_space.sample()
+            self.env.step(action)
+
+        captured_state = self.env.unwrapped.sim.agents[0].state[:9].copy()
+
+        self.env.reset(options={"states": captured_state.reshape(1, -1)})
+
+        restored_state = self.env.unwrapped.sim.agents[0].state[:9]
+        np.testing.assert_array_almost_equal(restored_state, captured_state, decimal=5)
+
 
 class TestInternalBookkeeping(unittest.TestCase):
     """Tests for internal state bookkeeping after full state reset."""
@@ -747,7 +812,12 @@ class TestNonStdFullStateReset(unittest.TestCase):
                     env.close()
 
     def test_full_state_wrong_width_rejected(self):
-        """Wrong row width raises ValueError. ST chosen as a representative."""
+        """Wrong row width raises ValueError. ST chosen as a representative.
+
+        Includes width 9 — that width is only valid for STD; ST must still
+        reject it so the STD-specific 9-wide acceptance doesn't leak across
+        models.
+        """
         env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
@@ -761,6 +831,8 @@ class TestNonStdFullStateReset(unittest.TestCase):
         try:
             with self.assertRaises(ValueError):
                 env.reset(options={"states": np.zeros((1, 5))})  # ST expects 7
+            with self.assertRaises(ValueError):
+                env.reset(options={"states": np.zeros((1, 9))})  # 9 is STD-only
         finally:
             env.close()
 

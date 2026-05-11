@@ -53,7 +53,7 @@ RECORD_OBS_MIN_MAX = _config["record_obs_min_max"]
 PREVENT_INSTABILITY = _config["prevent_instability"]
 
 # Vehicle parameters
-PARAMS = GKEnv.f1tenth_std_drift_bias_params()
+PARAMS = GKEnv.f1tenth_std_vehicle_params()
 
 # Render/debug params
 TEST_DEBUG_RENDER = _config["test_debug_render"]

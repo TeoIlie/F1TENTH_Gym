@@ -4,15 +4,10 @@ import pytest
 
 from gymkhana.envs.params import load_params
 
-# Minimum required keys for each model type.
-# ST/KS models need the base set; STD models add tire + wheel dynamics keys.
-_BASE_KEYS = {
-    "mu",
-    "C_Sf",
-    "C_Sr",
+# Geometry / steering / longitudinal constraints common to every model.
+_COMMON_KEYS = {
     "lf",
     "lr",
-    "h",
     "m",
     "s_min",
     "s_max",
@@ -26,7 +21,11 @@ _BASE_KEYS = {
     "length",
 }
 
-_TIRE_KEYS = {
+# Linear (CommonRoad-style) lateral tire keys used by the ST/MB-derived configs.
+_LINEAR_TIRE_KEYS = {"mu", "C_Sf", "C_Sr", "h"}
+
+# PAC2002 longitudinal + lateral tire coefficients.
+_PAC2002_TIRE_KEYS = {
     "tire_p_cx1",
     "tire_p_dx1",
     "tire_p_dx3",
@@ -61,17 +60,25 @@ _TIRE_KEYS = {
     "tire_r_vy6",
 }
 
-_STD_EXTRA_KEYS = {"I_z", "h_s", "R_w", "I_y_w", "T_sb", "T_se"} | _TIRE_KEYS
+# Measurable chassis/wheel parameters required by the STD drift dynamics.
+_STD_MEASURABLE_KEYS = {"I_z", "h_s", "R_w", "I_y_w", "T_sb", "T_se"}
+
+# Pacejka Magic Formula lateral coefficients used by the STP model.
+_STP_PACEJKA_KEYS = {"B_f", "C_f", "D_f", "E_f", "B_r", "C_r", "D_r", "E_r"}
 
 
 @pytest.mark.parametrize(
     "yaml_name, required_keys",
     [
-        ("fullscale", _BASE_KEYS | {"I"} | _TIRE_KEYS),
-        ("f1fifth", _BASE_KEYS | {"I"}),
-        ("f1tenth_st", _BASE_KEYS | {"I"}),
-        ("f1tenth_std", _BASE_KEYS | _STD_EXTRA_KEYS),
-        ("f1tenth_std_drift_bias", _BASE_KEYS | _STD_EXTRA_KEYS),
+        ("fullscale", _COMMON_KEYS | _LINEAR_TIRE_KEYS | {"I"} | _PAC2002_TIRE_KEYS),
+        ("f1fifth", _COMMON_KEYS | _LINEAR_TIRE_KEYS | {"I"}),
+        ("f1tenth_st", _COMMON_KEYS | _LINEAR_TIRE_KEYS | {"I"}),
+        ("f1tenth_std", _COMMON_KEYS | _STD_MEASURABLE_KEYS | _PAC2002_TIRE_KEYS),
+        (
+            "f1tenth_std_drift_bias",
+            _COMMON_KEYS | _LINEAR_TIRE_KEYS | _STD_MEASURABLE_KEYS | _PAC2002_TIRE_KEYS,
+        ),
+        ("f1tenth_stp", _COMMON_KEYS | {"mu", "I_z", "h_s"} | _STP_PACEJKA_KEYS),
     ],
 )
 def test_yaml_has_required_keys(yaml_name, required_keys):
@@ -83,7 +90,14 @@ def test_yaml_has_required_keys(yaml_name, required_keys):
 
 def test_yaml_values_are_numeric():
     """All parameter values should be int or float, not strings."""
-    for name in ("fullscale", "f1fifth", "f1tenth_st", "f1tenth_std", "f1tenth_std_drift_bias"):
+    for name in (
+        "fullscale",
+        "f1fifth",
+        "f1tenth_st",
+        "f1tenth_std",
+        "f1tenth_std_drift_bias",
+        "f1tenth_stp",
+    ):
         params = load_params(name)
         for key, val in params.items():
             assert isinstance(val, (int, float)), (
@@ -98,16 +112,3 @@ def test_load_params_returns_fresh_copy():
     assert a is not b
     a["m"] = 999.0
     assert b["m"] != 999.0
-
-
-def test_drift_bias_inherits_from_std():
-    """Drift bias params should match f1tenth_std except for the known overrides."""
-    base = load_params("f1tenth_std")
-    bias = load_params("f1tenth_std_drift_bias")
-    overridden = {"lf", "lr", "a_max", "tire_p_dy1", "tire_p_ky1", "T_se"}
-    assert set(base.keys()) == set(bias.keys())
-    for key in base:
-        if key in overridden:
-            assert base[key] != bias[key], f"{key} should differ but both are {base[key]}"
-        else:
-            assert base[key] == bias[key], f"{key} should match: base={base[key]}, bias={bias[key]}"

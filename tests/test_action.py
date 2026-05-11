@@ -388,9 +388,9 @@ class TestSteeringAngleFirstOrderLag:
     def test_falls_back_to_bang_bang(self, params, T_steer, timestep):
         p = dict(params) if T_steer is None else dict(params, T_steer=T_steer)
         sa = SteeringAngleAction(params=p, normalize=False, timestep=timestep)
-        assert sa.k is None
 
-        # Cover the three sign branches of bang_bang_steer (+, -, 0).
+        # When T_steer is absent / zero / has no timestep, act() must match
+        # bang_bang_steer exactly. Cover the three sign branches (+, -, 0).
         state = np.zeros(7)
         for desired, current in [(0.4, 0.1), (-0.4, 0.1), (0.1, 0.1)]:
             state[2] = current
@@ -402,7 +402,11 @@ class TestSteeringAngleFirstOrderLag:
         T, dt, delta_ref, N = 0.05, 0.01, 0.4, 50
         p = dict(params, T_steer=T, sv_max=1e6)
         sa = SteeringAngleAction(params=p, normalize=False, timestep=dt)
-        np.testing.assert_allclose(sa.k, (1.0 - np.exp(-dt / T)) / dt)
+
+        # Verify the lag-gain identity through act(): at δ=0 with sv_max
+        # effectively unbounded, sv = k·(δ_ref − δ) = k·δ_ref.
+        expected_k = (1.0 - np.exp(-dt / T)) / dt
+        np.testing.assert_allclose(sa.act(delta_ref, state=np.zeros(7), params=p), expected_k * delta_ref)
 
         delta, traj = 0.0, [0.0]
         state = np.zeros(7)
@@ -481,3 +485,129 @@ class TestSteeringAngleFirstOrderLag:
         # Approaching s_max, no overshoot
         assert deltas[-1] <= s_max + 1e-6
         assert deltas[-1] > 0.0
+
+
+# ============================================================================
+# Mid-run param swap via env.configure() — must propagate to act() output
+# ============================================================================
+
+
+class TestConfigureUpdatesActOutput:
+    """Verify GKEnv.configure({"params": ...}) updates flow through to each
+    action class's act() output via the per-agent action_type reference.
+
+    Regression net for the pre-refactor bug where each subclass cached
+    scaling factors (a_max, sv_max, s_max, T_steer-derived k) at __init__
+    and silently ignored mid-run param swaps. These tests exercise the exact
+    path env.step() takes — agent.action_type.act(...) reading from
+    agent.params, both updated via configure() → Simulator.update_params().
+    """
+
+    @staticmethod
+    def _make_env(control_input, normalize_act, params):
+        return gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "std",
+                "observation_config": {"type": "drift"},
+                "control_input": control_input,
+                "params": params,
+                "normalize_act": normalize_act,
+                "normalize_obs": True,
+                "timestep": 0.01,
+            },
+        )
+
+    def test_accl_action_a_max_update(self):
+        p = GKEnv.f1tenth_std_vehicle_params()
+        p["a_max"] = 6.0
+        env = self._make_env(["accl", "steering_angle"], normalize_act=True, params=p)
+        try:
+            env.reset(seed=0)
+            agent = env.unwrapped.sim.agents[0]
+            long_act = agent.action_type._longitudinal_action  # AcclAction (normalized)
+
+            # action=0.5 with a_max=6 → 3.0
+            assert long_act.act(0.5, state=agent.state, params=agent.params) == pytest.approx(3.0)
+
+            env.unwrapped.configure({"params": dict(agent.params, a_max=12.0)})
+
+            # action=0.5 with a_max=12 → 6.0
+            assert long_act.act(0.5, state=agent.state, params=agent.params) == pytest.approx(6.0)
+        finally:
+            env.close()
+
+    def test_speed_action_a_max_update(self):
+        p = GKEnv.f1tenth_std_vehicle_params()
+        p["a_max"] = 6.0
+        env = self._make_env(["speed", "steering_angle"], normalize_act=True, params=p)
+        try:
+            env.reset(seed=0)
+            agent = env.unwrapped.sim.agents[0]
+            long_act = agent.action_type._longitudinal_action  # SpeedAction (normalized)
+
+            # At state[3]=0 with action=1 → desired=v_max=20, p_accl uses
+            # kp = 2·a_max/v_max = 0.6, so accl = kp·20 = 12.0 with a_max=6.
+            agent.state[3] = 0.0
+            out_pre = long_act.act(1.0, state=agent.state, params=agent.params)
+            assert out_pre == pytest.approx(12.0)
+
+            env.unwrapped.configure({"params": dict(agent.params, a_max=12.0)})
+
+            # After doubling a_max, kp doubles → output doubles to 24.0.
+            out_post = long_act.act(1.0, state=agent.state, params=agent.params)
+            assert out_post == pytest.approx(24.0)
+            assert out_post == pytest.approx(2.0 * out_pre)
+        finally:
+            env.close()
+
+    def test_steering_angle_action_T_steer_update(self):
+        p = GKEnv.f1tenth_std_vehicle_params()
+        p["T_steer"] = 0.001
+        env = self._make_env(["accl", "steering_angle"], normalize_act=False, params=p)
+        try:
+            env.reset(seed=0)
+            agent = env.unwrapped.sim.agents[0]
+            steer_act = agent.action_type._steer_action  # SteeringAngleAction
+
+            delta_ref = 0.4
+            state = agent.state.copy()
+            state[2] = 0.0
+            dt = 0.01
+
+            # T_steer=0.001, dt=0.01 → k = (1 - exp(-10))/0.01 ≈ 99.995
+            k_pre = (1.0 - np.exp(-dt / 0.001)) / dt
+            out_pre = steer_act.act(delta_ref, state=state, params=agent.params)
+            assert out_pre == pytest.approx(k_pre * delta_ref)
+
+            env.unwrapped.configure({"params": dict(agent.params, T_steer=0.5)})
+
+            # T_steer=0.5, dt=0.01 → k ≈ 1.98 → ≈50× smaller than pre.
+            k_post = (1.0 - np.exp(-dt / 0.5)) / dt
+            out_post = steer_act.act(delta_ref, state=state, params=agent.params)
+            assert out_post == pytest.approx(k_post * delta_ref)
+            assert abs(out_pre) > 10 * abs(out_post), "T_steer change should produce a clearly distinct sv"
+        finally:
+            env.close()
+
+    def test_steering_speed_action_sv_max_update(self):
+        p = GKEnv.f1tenth_std_vehicle_params()
+        p["sv_max"] = 3.2
+        p["sv_min"] = -3.2  # env asserts sv_min == -sv_max
+        env = self._make_env(["accl", "steering_speed"], normalize_act=True, params=p)
+        try:
+            env.reset(seed=0)
+            agent = env.unwrapped.sim.agents[0]
+            steer_act = agent.action_type._steer_action  # SteeringSpeedAction (normalized)
+
+            # action=0.5 with sv_max=3.2 → 1.6
+            assert steer_act.act(0.5, state=agent.state, params=agent.params) == pytest.approx(1.6)
+
+            env.unwrapped.configure({"params": dict(agent.params, sv_max=8.0, sv_min=-8.0)})
+
+            # action=0.5 with sv_max=8.0 → 4.0
+            assert steer_act.act(0.5, state=agent.state, params=agent.params) == pytest.approx(4.0)
+        finally:
+            env.close()

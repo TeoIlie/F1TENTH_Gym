@@ -219,7 +219,7 @@ class RaceCar(object):
         Args:
             pose: Pose to reset to, shape ``(3,)`` as ``[x, y, yaw]``.
             state: Optional model-specific user-facing state row; see
-                :meth:`gymkhana.envs.dynamic_models.DynamicModel.user_state_len`
+                :meth:`gymkhana.envs.dynamic_models.DynamicModel.user_state_lens`
                 for accepted widths and layouts. MB does not support full-state
                 reset. If provided, ``pose`` is ignored.
         """
@@ -618,7 +618,7 @@ class Simulator(object):
             poses: Poses for all agents, shape ``(num_agents, 3)``.
             states: Optional full states for all agents, shape ``(num_agents, n)``
                 where ``n`` is the model-specific row width; see
-                :meth:`gymkhana.envs.dynamic_models.DynamicModel.user_state_len`
+                :meth:`gymkhana.envs.dynamic_models.DynamicModel.user_state_lens`
                 for accepted widths and layouts. MB does not support full-state
                 reset. If provided, ``poses`` is ignored.
 

@@ -263,6 +263,13 @@ Works with all observation types (`OriginalObservation`, `FeaturesObservation`, 
    # Front & rear angular wheel velocities are automatically initialized to form the full 9-d state for STD model type
    ```
 
+   For the STD model an explicit **9-element** row is also accepted, in which case the front and rear wheel angular velocities `omega_f`, `omega_r` (rad/s) are taken as given rather than derived from the no-slip rolling assumption. Useful for sysid / replay where the simulator must start from an exact measured state. The caller owns consistency between `v` and the wheel speeds.
+   ```python
+   # [x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]  (STD only)
+   states = np.array([[x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]])
+   env.reset(options={"states": states})
+   ```
+
 ## Customization
 
 ### Custom Maps

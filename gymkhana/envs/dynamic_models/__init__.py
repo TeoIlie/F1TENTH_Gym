@@ -112,16 +112,20 @@ class DynamicModel(Enum):
         else:
             raise ValueError(f"Unknown model type {model}")
 
-    def user_state_len(self) -> int:
-        """Return the user-facing state-row width accepted by full-state reset.
+    def user_state_lens(self) -> tuple:
+        """Return the user-facing state-row widths accepted by full-state reset.
 
-        - KS  -> 5 ``[x, y, delta, v, yaw]``
-        - ST  -> 7 ``[x, y, delta, v, yaw, yaw_rate, slip_angle]``
-        - STP -> 7 (same layout as ST)
-        - STD -> 7 (same layout as ST; ``omega_f, omega_r`` are computed by ``init_std``)
+        - KS  -> ``(5,)``  ``[x, y, delta, v, yaw]``
+        - ST  -> ``(7,)``  ``[x, y, delta, v, yaw, yaw_rate, slip_angle]``
+        - STP -> ``(7,)``  (same layout as ST)
+        - STD -> ``(7, 9)``: 7-wide is the same layout as ST with ``omega_f, omega_r``
+          derived from no-slip rolling inside ``init_std``; 9-wide additionally
+          accepts ``[..., omega_f, omega_r]`` (front and rear wheel angular
+          velocities, rad/s) taken as given. The caller owns consistency
+          between ``v`` and the wheel speeds.
 
         Returns:
-            The expected state-row width for this model.
+            Tuple of accepted state-row widths for this model.
 
         Raises:
             ValueError: For MB, which has a 29D internal state with
@@ -132,10 +136,10 @@ class DynamicModel(Enum):
                 "Full-state initialization is not supported for the MB model. Use pose-based reset instead."
             )
         return {
-            DynamicModel.KS: 5,
-            DynamicModel.ST: 7,
-            DynamicModel.STP: 7,
-            DynamicModel.STD: 7,
+            DynamicModel.KS: (5,),
+            DynamicModel.ST: (7,),
+            DynamicModel.STP: (7,),
+            DynamicModel.STD: (7, 9),
         }[self]
 
     def get_initial_state(self, pose=None, state=None, params: Optional[dict] = None):
@@ -145,7 +149,7 @@ class DynamicModel(Enum):
         Args:
             pose: (3,) array [x, y, yaw] - legacy pose-only initialization.
             state: Optional model-specific user-facing state row; see
-                :meth:`user_state_len` for accepted widths and layouts. MB
+                :meth:`user_state_lens` for accepted widths and layouts. MB
                 does not support full-state initialization.
             params: Vehicle parameters dictionary (required for MB and STD models)
 
@@ -179,13 +183,18 @@ class DynamicModel(Enum):
         else:
             raise ValueError(f"Unknown model type {self}")
 
-        # If full state provided, dispatch per model. Width and MB-rejection
-        # both come from DynamicModel.user_state_len so the rules live in one place.
+        # If full state provided, dispatch per model. Accepted widths and
+        # MB-rejection both come from DynamicModel.user_state_lens so the
+        # rules live in one place.
+        user_state_len_actual = None
         if state is not None:
-            expected_state_len = self.user_state_len()
-            if len(state) != expected_state_len:
-                raise ValueError(f"{self.name} model requires {expected_state_len}-element state, got {len(state)}")
-            init_state[:expected_state_len] = state
+            accepted_lens = self.user_state_lens()
+            user_state_len_actual = len(state)
+            if user_state_len_actual not in accepted_lens:
+                raise ValueError(
+                    f"{self.name} model requires state of length in {accepted_lens}, got {user_state_len_actual}"
+                )
+            init_state[:user_state_len_actual] = state
         # set initial pose if provided
         elif pose is not None:
             init_state[0:2] = pose[0:2]
@@ -194,9 +203,12 @@ class DynamicModel(Enum):
         # If state is MultiBody, we must inflate the state to 29D
         if self == DynamicModel.MB:
             init_state = init_mb(init_state, params)
-        # If state is SingleTrackDrift, we must inflate to 9D (calculates omega_f, omega_r)
+        # If state is SingleTrackDrift, we must inflate to 9D. When the user
+        # supplied an explicit 9-wide row, omega_f/omega_r are taken as given;
+        # otherwise they're derived from the no-slip rolling assumption.
         elif self == DynamicModel.STD:
-            init_state = init_std(init_state, params)
+            compute_wheel_speeds = user_state_len_actual != 9
+            init_state = init_std(init_state, params, compute_wheel_speeds=compute_wheel_speeds)
         return init_state
 
     @property

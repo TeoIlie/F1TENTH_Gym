@@ -168,6 +168,14 @@ Vehicles can be initialized at specific configurations via ``env.reset(options=.
    # Front & rear angular wheel velocities are automatically initialized
    # to form the full 9-d state for the STD model type
 
+For the STD model an explicit 9-element row is also accepted, in which case the front and rear wheel angular velocities ``omega_f``, ``omega_r`` (rad/s) are taken as given rather than derived from the no-slip rolling assumption. This is useful for sysid / replay where the simulator must start from an exact measured state. The caller owns consistency between ``v`` and the wheel speeds — when ``v`` is clamped to ``[v_min, v_max]``, the supplied wheel speeds are still used unchanged.
+
+.. code:: python
+
+   # [x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]  (STD only)
+   states = np.array([[x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]])
+   env.reset(options={"states": states})
+
 Only one of ``poses`` or ``states`` can be used per reset call. To use Frenet coordinates, convert first using ``frenet_to_cartesian()`` in ``gymkhana/envs/track/track.py``.
 
 Debugging and visualization

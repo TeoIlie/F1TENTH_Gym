@@ -176,9 +176,7 @@ class ObsDebugOverlay(QtWidgets.QWidget):
         normalize = state.get("obs_debug_normalize", False)
         idx = agent_idx if agent_idx is not None else ego_idx
 
-        lines = []
-        if normalize:
-            lines.append("[norm: on]")
+        lines = [f"[norm: {'on' if normalize else 'off'}]"]
 
         agent_features = get_features(idx)
         for key, value in agent_features.items():

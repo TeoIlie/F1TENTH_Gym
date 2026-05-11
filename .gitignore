@@ -200,3 +200,6 @@ figures/tests/
 
 # ROS2 bags for analysis
 examples/analysis/bags
+
+# Optuna study databases (Phase 3+)
+studies/

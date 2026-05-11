@@ -5,10 +5,10 @@ gymkhana simulator and produces a side-by-side comparison plot (XY trajectory,
 velocity, steering) saved as a single image.
 
 Usage:
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model ks
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model st
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model std
-    python examples/analysis/traj_compare.py --path /path/to/bag_100Hz.npz --model stp
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model ks
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model st
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model std
+    python examples/analysis/traj_compare.py --bag /path/to/bag_100Hz.npz --model stp
 
 Output:
     figures/analysis/traj_compare/<bag_stem>/plt_<model>.png
@@ -31,27 +31,41 @@ from gymkhana.envs.gymkhana_env import GKEnv
 
 def main():
     parser = argparse.ArgumentParser(description="Sim2Real trajectory comparison")
-    parser.add_argument("--path", required=True, help="Path to 100Hz resampled NPZ file")
+    parser.add_argument("--bag", required=True, help="Path to 100Hz resampled NPZ file")
     parser.add_argument("--model", required=True, choices=["ks", "st", "std", "stp"], help="Vehicle dynamics model")
+    parser.add_argument("--start", type=int, default=None, help="Start timestep index (inclusive, 0-based)")
+    parser.add_argument("--end", type=int, default=None, help="End timestep index (inclusive, 0-based)")
     args = parser.parse_args()
 
     # Load real data
-    data = np.load(args.path)
-    t = data["t"]
-    cmd_speed = data["cmd_speed"]
-    cmd_steer = data["cmd_steer"]
-    vicon_x = data["vicon_x"]
-    vicon_y = data["vicon_y"]
-    vicon_yaw = data["vicon_yaw"]
-    vicon_body_vx = data["vicon_body_vx"]
-    vicon_body_vy = data["vicon_body_vy"]
-    vicon_r = data["vicon_r"]
+    data = np.load(args.bag)
+    bag_len = len(data["t"])
+    start = args.start if args.start is not None else 0
+    end = args.end if args.end is not None else bag_len - 1
+    if not (0 <= start < bag_len):
+        raise ValueError(f"--start must be in [0, {bag_len - 1}], got {start}")
+    if not (start <= end < bag_len):
+        raise ValueError(f"--end must be in [{start}, {bag_len - 1}], got {end}")
+    sl = slice(start, end + 1)
+    is_sliced = (start != 0) or (end != bag_len - 1)
+
+    t = data["t"][sl]
+    cmd_speed = data["cmd_speed"][sl]
+    cmd_steer = data["cmd_steer"][sl]
+    vicon_x = data["vicon_x"][sl]
+    vicon_y = data["vicon_y"][sl]
+    vicon_yaw = data["vicon_yaw"][sl]
+    vicon_body_vx = data["vicon_body_vx"][sl]
+    vicon_body_vy = data["vicon_body_vy"][sl]
+    vicon_r = data["vicon_r"][sl]
+    rs_core_speed = data["rs_core_speed"][sl] if "rs_core_speed" in data.files else None
 
     # Output path
-    stem = Path(args.path).stem
+    stem = Path(args.bag).stem
     out_dir = os.path.join("figures", "analysis", "traj_compare", stem)
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"plt_{args.model}.png")
+    suffix = f"_{start}_{end}" if is_sliced else ""
+    out_path = os.path.join(out_dir, f"plt_{args.model}{suffix}.png")
 
     # Select params based on model
     if args.model == "std":
@@ -75,6 +89,14 @@ def main():
     }
     env = gym.make("gymkhana:gymkhana-v0", config=config)
     obs, _ = env.reset(options={"poses": np.array([[vicon_x[0], vicon_y[0], vicon_yaw[0]]])})
+
+    has_wheel_omegas = args.model == "std"
+    sim_omega_front = []
+    sim_omega_rear = []
+    if has_wheel_omegas:
+        state = env.unwrapped.sim.agents[0].state
+        sim_omega_front.append(float(state[7]))
+        sim_omega_rear.append(float(state[8]))
 
     # Record initial state
     agent_obs = obs["agent_0"]
@@ -103,8 +125,15 @@ def main():
         sim_beta.append(float(agent_obs["beta"]))
         sim_cmd_speed.append(cmd_speed[i])
         sim_cmd_steer.append(cmd_steer[i])
+        if has_wheel_omegas:
+            state = env.unwrapped.sim.agents[0].state
+            sim_omega_front.append(float(state[7]))
+            sim_omega_rear.append(float(state[8]))
 
     env.close()
+
+    sim_omega_front = np.array(sim_omega_front)
+    sim_omega_rear = np.array(sim_omega_rear)
 
     # Convert to arrays
     sim_x = np.array(sim_x)
@@ -119,7 +148,7 @@ def main():
 
     # Time axis: sim has n points starting from t=0 with 0.01 spacing
     n = len(sim_x)
-    sim_t = np.arange(n) * 0.01
+    sim_t = np.arange(n) * 0.01 + float(t[0])
 
     # Trim real data to match sim duration
     n_real = min(len(t), n)
@@ -142,8 +171,8 @@ def main():
     real_beta = np.where(real_speed > 0.2, real_beta, np.nan)
 
     fig, axes_grid = plt.subplots(2, 4, figsize=(32, 14))
-    fig.suptitle(f"Sim2Real Comparison — {model_label} model ({stem})", fontsize=14)
-    axes_grid[0, 3].axis("off")
+    range_label = f" [{start}:{end}]" if is_sliced else ""
+    fig.suptitle(f"Sim2Real Comparison — {model_label} model ({stem}){range_label}", fontsize=14)
     axes = [
         axes_grid[0, 0],  # XY
         axes_grid[0, 1],  # vx
@@ -152,6 +181,7 @@ def main():
         axes_grid[1, 1],  # yaw rate
         axes_grid[1, 2],  # long. accel
         axes_grid[1, 3],  # slip angle
+        axes_grid[0, 3],  # wheel angular velocities
     ]
 
     # --- Plot 1: XY Trajectory ---
@@ -230,6 +260,23 @@ def main():
     ax.set_title("Slip Angle — Real vs Sim")
     ax.legend()
     ax.grid(True, alpha=0.3)
+
+    # --- Plot 8: Wheel angular velocities ---
+    ax = axes[7]
+    if has_wheel_omegas:
+        R_w = params["R_w"]
+        ax.plot(sim_t[:n_real], sim_omega_front[:n_real], label="Sim ω_front", linewidth=1.5, linestyle="--")
+        ax.plot(sim_t[:n_real], sim_omega_rear[:n_real], label="Sim ω_rear", linewidth=1.5, linestyle="--")
+        if rs_core_speed is not None:
+            real_omega = rs_core_speed / R_w
+            ax.plot(t[:n_real], real_omega[:n_real], label=f"VESC ω (rs_core_speed/R_w, R_w={R_w})", linewidth=1)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Angular velocity (rad/s)")
+        ax.set_title("Wheel Angular Velocity — VESC vs Sim")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    else:
+        ax.axis("off")
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
