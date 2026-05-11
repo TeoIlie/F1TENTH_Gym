@@ -16,7 +16,7 @@ from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.loss import dataset_loss
 from examples.analysis.sysid.sensitivity import (
     FROZEN_PARAMS,
-    STAGE12_CANDIDATES,
+    STAGE1_CANDIDATES,
     VEHICLE_DYN_CANDIDATES,
     run_sweep,
 )
@@ -25,10 +25,10 @@ BAG_PATH = "examples/analysis/bags/circle_Apr6_100Hz.npz"
 
 
 def test_frozen_params_excluded_from_candidates():
-    assert set(STAGE12_CANDIDATES) & set(FROZEN_PARAMS) == set()
+    assert set(STAGE1_CANDIDATES) & set(FROZEN_PARAMS) == set()
     assert set(VEHICLE_DYN_CANDIDATES) & set(FROZEN_PARAMS) == set()
-    assert set(STAGE12_CANDIDATES) & set(VEHICLE_DYN_CANDIDATES) == set()
-    for name in (*STAGE12_CANDIDATES, *VEHICLE_DYN_CANDIDATES):
+    assert set(STAGE1_CANDIDATES) & set(VEHICLE_DYN_CANDIDATES) == set()
+    for name in (*STAGE1_CANDIDATES, *VEHICLE_DYN_CANDIDATES):
         assert name in SYSID_PARAMS, f"{name!r} not in SYSID_PARAMS"
 
 
@@ -54,9 +54,9 @@ def test_delta_zero_reproduces_baseline():
     with Rollout() as r:
         r.set_params(SYSID_PARAMS)
         expected_total, _ = dataset_loss(r.run, ds)
-        rows = run_sweep(r, ds, SYSID_PARAMS, candidates=STAGE12_CANDIDATES, deltas=(0.0,))
+        rows = run_sweep(r, ds, SYSID_PARAMS, candidates=STAGE1_CANDIDATES, deltas=(0.0,))
 
-    assert len(rows) == len(STAGE12_CANDIDATES)
+    assert len(rows) == len(STAGE1_CANDIDATES)
     for row in rows:
         assert row.delta == 0.0
         assert row.total == pytest.approx(expected_total, rel=1e-12, abs=1e-12)

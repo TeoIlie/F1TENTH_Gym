@@ -31,22 +31,46 @@ from examples.analysis.sysid.rollout import Rollout
 
 DELTAS_DEFAULT: tuple[float, ...] = (-0.50, -0.25, -0.10, 0.0, +0.10, +0.25, +0.50)
 
-# Stage 1/2 tire-coefficient candidates. The locked search space (in
-# search_spaces.py) is a *subset* of these; the broader list is kept here so
-# re-runs on a new bag can verify the demotion decisions in the report.
-STAGE12_CANDIDATES: tuple[str, ...] = (
-    "tire_p_cx1",
+# Chassis / actuator params estimated rather than measured.
+VEHICLE_DYN_CANDIDATES: tuple[str, ...] = ("I_z", "I_y_w", "sv_max", "sv_min", "T_steer", "a_max", "h_s", "R_w")
+
+# Stage 1 - top tire params
+STAGE1_CANDIDATES: tuple[str, ...] = (
+    # top longitudinal candidates
     "tire_p_dx1",
-    "tire_p_ex1",
     "tire_p_kx1",
-    "tire_p_cy1",
+    # top lateral candidates
     "tire_p_dy1",
-    "tire_p_ey1",
     "tire_p_ky1",
 )
 
-# Chassis / actuator params estimated rather than measured.
-VEHICLE_DYN_CANDIDATES: tuple[str, ...] = ("I_z", "I_y_w", "sv_max", "sv_min", "T_steer", "a_max")
+STAGE2_CANDIDATES: tuple[str, ...] = (
+    # secondary longitudinal candidates
+    "tire_p_cx1",
+    "tire_p_ex1",
+    # secondary lateral candidates
+    "tire_p_cy1",
+    "tire_p_ey1",
+)
+
+STAGE3_CANDIDATES: tuple[str, ...] = (
+    # longitudinal combined
+    "tire_r_bx1",
+    "tire_r_bx2",
+    # lateral combined
+    "tire_r_by1",
+    "tire_r_by2",
+)
+
+FINE_TUNE_CANDIDATES: tuple[str, ...] = (
+    "tire_r_by3",
+    "tire_r_cx1",
+    "tire_r_ex1",
+    "tire_r_cy1",
+    "tire_r_ey1",
+    "tire_r_vy1",
+    "tire_r_vy5",
+)
 
 # Permanently frozen per OVERVIEW (camber-coupled + pure-shift). Routed through
 # the audit gate; never promoted to the Optuna search space.
@@ -64,7 +88,10 @@ FROZEN_PARAMS: frozenset[str] = frozenset(
 )
 
 CANDIDATE_GROUPS: dict[str, tuple[str, ...]] = {
-    "stage12": STAGE12_CANDIDATES,
+    "stage1": STAGE1_CANDIDATES,
+    "stage2": STAGE2_CANDIDATES,
+    "stage3": STAGE3_CANDIDATES,
+    "fine_tune": FINE_TUNE_CANDIDATES,
     "vehicle_dyn": VEHICLE_DYN_CANDIDATES,
     "frozen": tuple(sorted(FROZEN_PARAMS)),
 }
@@ -95,7 +122,7 @@ def run_sweep(
     rollout: Rollout,
     dataset: Dataset,
     base_params: dict,
-    candidates: Sequence[str] = STAGE12_CANDIDATES,
+    candidates: Sequence[str] = STAGE1_CANDIDATES,
     deltas: Sequence[float] = DELTAS_DEFAULT,
     mode: str = "multiplicative",
     allow_frozen: bool = False,
@@ -186,7 +213,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Sysid sensitivity sweep")
     parser.add_argument("--bag", required=True, help="Path to NPZ bag")
-    parser.add_argument("--candidates", choices=tuple(CANDIDATE_GROUPS), default="stage12")
+    parser.add_argument("--candidates", choices=tuple(CANDIDATE_GROUPS), default="stage1")
     parser.add_argument("--mode", choices=("multiplicative", "absolute"), default="multiplicative")
     parser.add_argument("--deltas", default=None, help=f"CSV deltas (default: {DELTAS_DEFAULT})")
     parser.add_argument("--out-csv", default=None, help="Default: figures/analysis/sysid/sensitivity/<bag>/sweep.csv")

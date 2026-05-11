@@ -36,18 +36,18 @@ T_se: 0.5       # [no units] torque split of engine (percent of torque sent to f
 # Sysid priority: peaks & stiffness (d*, k*) > combined slopes (r_b*) > shifts/curvature
 
 # Pure-slip longitudinal (formula_longitudinal)
-tire_p_dx1: 1.1739       # D: peak longitudinal friction μ_x
-tire_p_kx1: 22.303       # K→B: longitudinal slip stiffness
-tire_p_cx1: 1.6411       # C: shape of Fx curve
-tire_p_ex1: 0.46403      # E: curvature of Fx peak
+tire_p_dx1: 1.1739       # D: peak longitudinal friction μ_x - dominant long. param
+tire_p_kx1: 22.303       # K→B: longitudinal slip stiffness - secondary long. para,
+tire_p_cx1: 1.6411       # C: shape of Fx curve - tertiary long. param
+tire_p_ex1: 0.46403      # E: curvature of Fx peak - tertiary long. param
 tire_p_hx1: 0.0012297    # Sh: horizontal shift
 tire_p_vx1: -8.8098e-06  # Sv: vertical shift
 
 # Pure-slip lateral (formula_lateral)
-tire_p_dy1: 1.0489       # D: peak lateral friction μ_y
-tire_p_ky1: -21.92       # K→B: cornering stiffness
-tire_p_cy1: 1.3507       # C: shape of Fy curve
-tire_p_ey1: -0.0074722   # E: curvature of Fy peak
+tire_p_dy1: 1.0489       # D: peak lateral friction μ_y - dominant lat. param
+tire_p_ky1: -21.92       # K→B: cornering stiffness - secondary lat. param
+tire_p_cy1: 1.3507       # C: shape of Fy curve - tertiary lat. param
+tire_p_ey1: -0.0074722   # E: curvature of Fy peak - tertiary lat. param
 tire_p_hy1: 0.0026747    # Sh: horizontal shift
 tire_p_vy1: 0.037318     # Sv: vertical shift
 

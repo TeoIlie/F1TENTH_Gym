@@ -20,7 +20,7 @@ import yaml
 from examples.analysis.sysid.dataset import load_dataset
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.rollout import Rollout
-from examples.analysis.sysid.search_spaces import STAGE1_SPACE, SYMMETRIC_PAIRS
+from examples.analysis.sysid.search_spaces import STAGE1, SYMMETRIC_PAIRS
 from examples.analysis.sysid.study import Objective, build_study, dump_best_params
 
 BAG_PATH = "examples/analysis/bags/circle_Apr6_100Hz.npz"
@@ -49,7 +49,7 @@ def test_study_smoke_runs_and_persists(tmp_path, dataset, rollout):
     journal_path = tmp_path / "smoke.journal"
     study = build_study("smoke_test", journal_path, seed=42)
 
-    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
+    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1)
     study.optimize(obj, n_trials=2)
 
     assert journal_path.exists() and journal_path.stat().st_size > 0
@@ -70,7 +70,7 @@ def test_diverged_trial_is_pruned(tmp_path, dataset, rollout):
     journal_path = tmp_path / "div.journal"
     study = build_study("div_test", journal_path, seed=0)
 
-    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
+    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1)
 
     # Patch Rollout.run to raise FloatingPointError every call.
     with patch.object(Rollout, "run", side_effect=FloatingPointError("synthetic divergence")):
@@ -90,7 +90,7 @@ def test_dump_best_params_round_trip(tmp_path, dataset, rollout):
     journal_path = tmp_path / "dump.journal"
     study = build_study("dump_test", journal_path, seed=7)
 
-    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
+    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1)
     study.optimize(obj, n_trials=2)
 
     out_yaml = tmp_path / "out.yaml"
@@ -111,7 +111,7 @@ def test_dump_best_params_round_trip(tmp_path, dataset, rollout):
         if src in study.best_params:
             assert loaded[partner] == pytest.approx(-study.best_params[src])
     # Remaining (truly untouched) keys equal SYSID_PARAMS.
-    overlaid = set(STAGE1_SPACE) | {p for s, p in SYMMETRIC_PAIRS.items() if s in study.best_params}
+    overlaid = set(STAGE1) | {p for s, p in SYMMETRIC_PAIRS.items() if s in study.best_params}
     for k, v in SYSID_PARAMS.items():
         if k not in overlaid:
             assert loaded[k] == v
@@ -134,7 +134,7 @@ def test_enqueue_trial_matches_direct_rollout(tmp_path, dataset, rollout):
     from examples.analysis.sysid.search_spaces import apply_trial_params
 
     # Midpoint of every Stage-1 bound — guaranteed in-bounds.
-    point = {name: 0.5 * (dist.low + dist.high) for name, dist in STAGE1_SPACE.items()}
+    point = {name: 0.5 * (dist.low + dist.high) for name, dist in STAGE1.items()}
 
     # Direct path: overlay onto SYSID_PARAMS, set on env, run dataset_loss.
     direct_params = apply_trial_params(dict(SYSID_PARAMS), point)
@@ -145,7 +145,7 @@ def test_enqueue_trial_matches_direct_rollout(tmp_path, dataset, rollout):
     journal_path = tmp_path / "enqueue.journal"
     study = build_study("enqueue_test", journal_path, seed=0)
     study.enqueue_trial(point)
-    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1_SPACE)
+    obj = Objective(dataset, rollout, dict(SYSID_PARAMS), STAGE1)
     study.optimize(obj, n_trials=1)
 
     assert study.trials[0].value == pytest.approx(direct_loss, rel=1e-6, abs=1e-9), (
