@@ -546,6 +546,12 @@ def main(argv: list[str] | None = None) -> int:
 
     originals = [w for w in dataset.windows if not w.is_mirrored]
     warmup_steps = int(round(args.warmup_s / dataset.dt))
+    min_window_len = min(len(w.real_v_x) for w in dataset.windows)
+    if warmup_steps >= min_window_len:
+        raise SystemExit(
+            f"--warmup-s={args.warmup_s} ({warmup_steps} steps at dt={dataset.dt}) "
+            f"leaves no scored samples (shortest window has {min_window_len} samples)"
+        )
     totals: list[float] = []
     accum: dict[str, list[float]] = {ch: [] for ch in CHANNELS}
 

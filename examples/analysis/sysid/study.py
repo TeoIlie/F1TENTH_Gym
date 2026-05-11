@@ -219,9 +219,18 @@ def main(argv: list[str] | None = None) -> int:
         objective = Objective(dataset, rollout, base_params, space, wandb_run=wandb_run)
         _LOG.info("Running %d trials (stage=%d, |space|=%d, seed=%d)", args.n_trials, args.stage, len(space), SEED)
         study.optimize(objective, n_trials=args.n_trials)
-        wandb_run.summary["best_value"] = study.best_value
-        wandb_run.summary["best_params"] = study.best_params
+        # Objective maps divergence to TrialPruned; if every trial pruned, best_value/best_params raise.
+        has_completed = any(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
+        wandb_run.summary["best_value"] = study.best_value if has_completed else None
+        wandb_run.summary["best_params"] = study.best_params if has_completed else None
         wandb_run.summary["n_trials_total"] = len(study.trials)
+        wandb_run.summary["all_trials_pruned"] = not has_completed
+
+    if not has_completed:
+        _LOG.error(
+            "All %d trials pruned; skipping dump_best_params. Inspect journal: %s", len(study.trials), journal_path
+        )
+        return 1
 
     timestamp = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
     header = (

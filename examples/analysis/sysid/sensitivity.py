@@ -162,6 +162,8 @@ def rank(rows: list[SweepRow]) -> list[tuple[str, float]]:
     base = next((r for r in rows if r.delta == 0.0), None)
     if base is None:
         raise ValueError("No δ=0 row in sweep")
+    if not math.isfinite(base.total):
+        raise ValueError(f"Unperturbed baseline total is non-finite ({base.total}); deviations would be meaningless")
     by_param: dict[str, list[SweepRow]] = {}
     for r in rows:
         by_param.setdefault(r.param, []).append(r)
