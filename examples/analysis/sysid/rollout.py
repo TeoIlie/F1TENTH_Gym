@@ -34,6 +34,7 @@ _SYSID_OVERRIDES: dict = {
     "render_lookahead_curvatures": False,
     "debug_frenet_projection": False,
     "record_obs_min_max": False,
+    "domain_randomization": None,
 }
 
 

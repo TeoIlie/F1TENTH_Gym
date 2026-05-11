@@ -26,8 +26,9 @@ inert when the user omits the config (so eval configs need no extra flag).
 
 ```
 GKEnv.__init__
-   └─ store _base_params = deepcopy(self.params)
+   └─ store _base_params = deepcopy(self.params)            # always; defensive
    └─ parse self.dr_sigmas = config["domain_randomization"] or {}
+   └─ self.dr_clip_k     = config["dr_clip_k"]               # config-driven, default 3.0
         │
         ▼
 GKEnv.reset(seed=…)
@@ -37,7 +38,7 @@ GKEnv.reset(seed=…)
    │     perturbed = deepcopy(self._base_params)            # always off base, no compounding
    │     for name, sigma in self.dr_sigmas.items():
    │         raw  = np.random.normal(1.0, sigma)             # σ is std dev (np.random.normal scale=σ)
-   │         mult = clip(raw, 1 − K·σ, 1 + K·σ)              # K = _DR_CLIP_K = 3.0
+   │         mult = clip(raw, 1 − K·σ, 1 + K·σ)              # K = self.dr_clip_k (default 3.0)
    │         perturbed[name] = self._base_params[name] * mult
    │     self.update_params(perturbed)                       # → Simulator → all RaceCars
    └─ self.sim.reset(poses, states=states)                   # dynamics now use perturbed params
@@ -72,14 +73,15 @@ config = {
 }
 ```
 
-- Default in `default_config()`: `None`. Absence (or `{}`) ⇒ no randomization.
-  No separate train/eval switch.
-- The clip multiplier is a module-level constant `_DR_CLIP_K = 3.0` (not
-  user-facing). Clipping is on the *multiplier*, so ≈0.27% of draws are
-  clipped at default. This keeps the integrator out of pathological regimes
-  and prevents non-physical sign flips for bounded params (`T_sb`, `T_se`,
-  etc.) — sign flips at σ ≤ 0.10 are already ≥10σ tail events, so this is
-  belt-and-braces, not a load-bearing safeguard.
+- `domain_randomization` default in `default_config()`: `None`. Absence (or
+  `{}`) ⇒ no randomization. No separate train/eval switch.
+- `dr_clip_k` default in `default_config()`: `3.0`. Config-driven (not a
+  module constant) so tests can adjust it without monkey-patching and YAML
+  sweeps are possible. Clipping is on the *multiplier*, so ≈0.27% of draws
+  are clipped at default. This keeps the integrator out of pathological
+  regimes and prevents non-physical sign flips for bounded params (`T_sb`,
+  `T_se`, etc.) — sign flips at σ ≤ 0.10 are already ≥10σ tail events, so
+  this is belt-and-braces, not a load-bearing safeguard.
 
 ### Reset semantics
 
@@ -103,6 +105,12 @@ config = {
   `sv_min == -sv_max`. The asserts run in `__init__` only, but a user adding
   `s_max` to the DR dict will end up with asymmetric bounds at runtime.
   Document; do not auto-mirror.
+- **Non-RL pipelines that reuse `get_drift_train_config()` must opt out of
+  DR explicitly.** Sysid replay (`examples/analysis/sysid/rollout.py`),
+  baselines, and any deterministic-physics analysis that pulls the train
+  config will inherit DR by default. Override with
+  `"domain_randomization": None` in the consumer's local config overrides.
+  Sysid's `_SYSID_OVERRIDES` does this as the canonical example.
 
 ### Train-only wiring
 
@@ -135,15 +143,16 @@ the helpers above, so the train-only routing is transparent.
 
 - `gymkhana/envs/gymkhana_env.py`
   - Add `import copy` at top.
-  - Add module-level constant `_DR_CLIP_K = 3.0`.
-  - `default_config()` (line 562): add `"domain_randomization": None`.
-  - `__init__` (after `self.params = self.config["params"]` at line 169):
-    - `self._base_params = copy.deepcopy(self.params)`
+  - `default_config()`: add `"domain_randomization": None` and `"dr_clip_k": 3.0`.
+  - `__init__` (after `self.params = self.config["params"]`):
+    - `self._base_params = copy.deepcopy(self.params)` (always, unconditional —
+      cheap defensive snapshot)
     - `self.dr_sigmas = self.config.get("domain_randomization") or {}`
-  - `reset()` (after `super().reset(seed=seed)` at line 1104, before the
-    `self.sim.reset(...)` call at line 1203): insert the DR application block
-    shown in the diagram. No extra seeding — the existing
-    `np.random.seed(seed)` at line 1103 already governs DR draws.
+    - `self.dr_clip_k = self.config["dr_clip_k"]`
+  - `reset()` (after `super().reset(seed=seed)`, before the `self.sim.reset(...)`
+    call): insert the DR application block shown in the diagram. No extra
+    seeding — the existing `np.random.seed(seed)` at the top of `reset()`
+    already governs DR draws.
 - `train/config/gym_config.yaml`: add a `domain_randomization` block (per-param σ).
 - `train/config/env_config.py`:
   - Load `DOMAIN_RANDOMIZATION` from the YAML.
@@ -178,7 +187,7 @@ Unit tests in `tests/test_domain_randomization.py` (follow existing style in
    `env.sim.agents[i].params["m"]` matches the env-level perturbed value —
    confirms the integrator actually uses the new values.
 7. **Clipping.** σ = 0.1, N = 10000: `max(multiplier) ≤ 1 + 3·σ + ε` and
-   `min(multiplier) ≥ 1 − 3·σ − ε` (with `_DR_CLIP_K = 3.0`).
+   `min(multiplier) ≥ 1 − 3·σ − ε` (with `dr_clip_k = 3.0`).
 8. **Train-only wiring.** `get_drift_train_config()` contains a non-empty
    `domain_randomization` key; `get_drift_test_config()` does not (or has it
    as `None`/`{}`). Asserted directly against the dicts returned by the
@@ -203,98 +212,125 @@ Designed to be tackled in order; each step is independently verifiable so a
 mistake at step N doesn't poison step N+1. Run the relevant tests after
 each step.
 
-### Step 1 — Env-level plumbing in `gymkhana_env.py`
+### Step 1 — Env-level plumbing in `gymkhana_env.py` ✅ DONE
 
-1. At the top of the file, add `import copy` alongside the existing imports.
-2. Above the `GKEnv` class definition, add the module-level constant:
-   `_DR_CLIP_K = 3.0`.
-3. In `default_config()` (around line 562), add a new entry:
-   `"domain_randomization": None`. Place it near the other reset/seed-related
-   keys so it's easy to find.
-4. In `__init__`, immediately after `self.params = self.config["params"]`
-   (line 169), add:
+1. Add `import copy` at the top of the file alongside `warnings`.
+2. In `default_config()` (around line 562), add two entries near the other
+   reset/seed-related keys:
+   - `"domain_randomization": None` (absent ⇒ no perturbation)
+   - `"dr_clip_k": 3.0` (multiplier-clip factor; configurable so tests and
+     YAML sweeps can adjust it without monkey-patching)
+3. In `__init__`, immediately after `self.params = self.config["params"]`,
+   add (unconditional — `_base_params` is cheap defensive insurance even
+   when DR is off, and avoids `hasattr` checks downstream):
    - `self._base_params = copy.deepcopy(self.params)`
    - `self.dr_sigmas = self.config.get("domain_randomization") or {}`
-5. **Verify before moving on:** construct an env with no config override and
-   confirm `env.dr_sigmas == {}` and `env._base_params == env.params`. Run
-   `python3 -m pytest` — nothing should break since DR is dormant.
+   - `self.dr_clip_k = self.config["dr_clip_k"]`
+4. **Verified:** env without overrides → `dr_sigmas == {}`, `dr_clip_k == 3.0`,
+   `_base_params == params` (value-equal) but `_base_params is not params`
+   (distinct objects). Env with DR config plumbs `dr_sigmas` and `dr_clip_k`
+   correctly.
 
-### Step 2 — DR application in `reset()`
+### Step 2 — DR application in `reset()` ✅ DONE
 
-1. In `reset()`, locate the block between `super().reset(seed=seed)` (line
-   1104) and `self.sim.reset(poses, states=states)` (line 1203). The DR
-   block must come **before** `self.sim.reset`.
-2. Insert the perturbation loop:
+1. In `reset()`, the DR block was inserted directly after
+   `super().reset(seed=seed)` and **before** `self.track.set_direction(...)`
+   so DR runs as part of the per-reset setup but the global seed is already
+   established. Must execute before `self.sim.reset(poses, states=states)`
+   so the dynamics integrators read the perturbed params on the very first
+   integration step.
+2. Implementation:
    ```python
    if self.dr_sigmas:
        perturbed = copy.deepcopy(self._base_params)
        for name, sigma in self.dr_sigmas.items():
            mult = np.random.normal(1.0, sigma)
-           mult = np.clip(mult, 1.0 - _DR_CLIP_K * sigma, 1.0 + _DR_CLIP_K * sigma)
+           mult = np.clip(mult, 1.0 - self.dr_clip_k * sigma, 1.0 + self.dr_clip_k * sigma)
            perturbed[name] = self._base_params[name] * mult
        self.update_params(perturbed)
    ```
-3. **Verify:** manually construct an env with `config={"domain_randomization":
-   {"m": 0.1}}`, call `env.reset(seed=0)` twice, and confirm
-   `env.sim.agents[0].params["m"]` changes between resets and differs from
-   `env._base_params["m"]`. Also confirm that all other params are
-   byte-identical to `_base_params`.
+3. **Verified** (DR on `m` only, σ = 0.1):
+   - `m` changes between successive resets and differs from `_base_params["m"]`.
+   - All non-DR params byte-identical to `_base_params` after reset.
+   - `_base_params["m"]` itself is unmutated after two perturbed resets
+     (deepcopy invariant).
+   - `np.random.normal(1, 0.1)` with seed 0 produces multiplier 1.176, which
+     matches the expected first standard-normal draw — confirms σ is
+     correctly used as scale (std dev), not variance.
 
-### Step 3 — Unit tests in `tests/test_domain_randomization.py`
+### Step 3 — Unit tests in `tests/test_domain_randomization.py` ✅ DONE
 
-1. Create the file. Pattern after `tests/test_action.py` / `tests/test_env_reset.py`.
-2. Write the seven env-level tests listed in Verification (no-DR baseline,
-   reproducibility, statistical correctness, scope, no compounding,
-   propagation, clipping).
-3. Skip test #8 for now — wire it in step 5.
-4. **Verify:** `python3 -m pytest tests/test_domain_randomization.py -v` — all
-   pass. Then `python3 -m pytest` — no regressions elsewhere.
+1. File created using the pytest style of `test_action.py` (function tests +
+   small helper, not a `unittest.TestCase`). Shared `_make_env(dr=..., dr_clip_k=...)`
+   helper builds a minimal single-agent env; `_multipliers(env, name, seeds)`
+   resets through a seed sequence and returns the per-reset `param/base` ratios.
+2. Nine tests written (covers the seven from the plan, plus multi-agent
+   broadcast and a clip-is-load-bearing sanity check):
+   1. `test_no_dr_baseline` — env without DR ⇒ `sim.agents[0].params == _base_params`.
+   2. `test_reproducibility_and_multi_param_independence` — same seed → identical multipliers across two envs, and `m` and `lf` get independent draws (not a shared draw replayed).
+   3. `test_sigma_is_std_dev` — N=500, σ=0.05: mean within 1% of 1.0, std within 10% of σ.
+   4. `test_scope_only_listed_params_perturbed` — listed params change, others byte-identical to base.
+   5. `test_no_compounding_across_resets` — N=200, σ=0.2, K=3: mean ≈ 1.0 *and* sample std stays near σ (a multiplicative random walk would explode variance).
+   6. `test_propagation_to_racecar` — `sim.agents[0].params["m"]` perturbed and matches `sim.params["m"]`.
+   7. `test_multi_agent_broadcast` — with `num_agents=2`, both agents see the same perturbed value (guards against a regression that drops the `agent_idx=-1` broadcast).
+   8. `test_clipping_bounds_respected` — N=1000, σ=0.1, K=3: no multiplier exceeds 1 ± K·σ.
+   9. `test_tight_clip_reduces_spread` — tight `dr_clip_k=0.5` produces strictly smaller std than loose `dr_clip_k=5.0`; sanity check that the clip wiring is actually load-bearing.
+3. Test #8 from the plan's verification list ("Train-only wiring") is
+   deferred to Step 5 since it needs `env_config.py` changes.
+4. **Performance:** module-scoped fixtures share one single-agent env and
+   one two-agent env across all nine tests. Env construction is the dominant
+   cost (~1.2s each); reuse drops the suite from 11 env builds to 2. Tests
+   mutate `env.dr_sigmas` / `env.dr_clip_k` directly before each reset,
+   which works because both are read fresh inside `reset()` with no
+   construction-time dependency. No autouse cleanup — each test explicitly
+   declares its own DR config at the top.
+5. **Verified:** `python3 -m pytest tests/test_domain_randomization.py -v` →
+   9 passed in 10.0s (down from 19.1s pre-optimization). Pylance warnings on
+   `.unwrapped` are pre-existing typing noise (gymnasium stubs return
+   `Env[Unknown, Unknown]`); same pattern in `test_env_reset.py`.
 
-### Step 4 — Training pipeline wiring
+### Step 4 — Training pipeline wiring ✅ DONE
 
-1. In `train/config/gym_config.yaml`, add a new top-level block:
-   ```yaml
-   domain_randomization:
-     m: 0.05
-     # ... starter σ values for parameters you want to randomize
-   ```
-   (Pick a small initial set — `m`, `lf`, and one tire param is enough to
-   smoke-test.)
-2. In `train/config/env_config.py`:
-   - Near the other `_config[...]` reads, add:
-     `DOMAIN_RANDOMIZATION = _config.get("domain_randomization")`.
-   - In `get_drift_train_config()`, fold DR into the returned dict, e.g.
-     `return {**_base_config(TRAIN_DEBUG_RENDER), **_drift_overrides(),
-     "domain_randomization": DOMAIN_RANDOMIZATION}`.
-   - Leave `get_drift_test_config()` untouched.
-3. **Verify:**
-   - `get_drift_train_config()["domain_randomization"]` returns the YAML dict.
-   - `"domain_randomization" not in get_drift_test_config()` (or is `None`).
-   - `presets.py::drift_config()` still has no `domain_randomization` key.
+1. `train/config/gym_config.yaml` has a top-level `domain_randomization`
+   block (`m: 0.05`, `I_z: 0.02`). Commented header notes that omitting
+   the block disables DR.
+2. `train/config/env_config.py`:
+   - `DOMAIN_RANDOMIZATION = _config.get("domain_randomization")` loaded
+     once at module import, alongside the other module-level constants.
+   - `get_drift_train_config()` and `get_recovery_train_config()` both
+     inject `"domain_randomization": DOMAIN_RANDOMIZATION` into the
+     returned dict.
+   - `get_drift_test_config()` and `get_recovery_test_config()` are
+     untouched — DR key absent ⇒ env-level default of `None` kicks in ⇒
+     no perturbation on eval.
+3. `gymkhana/presets.py::drift_config` left DR-agnostic, as planned.
 
-### Step 5 — Train-only wiring test
+### Step 5 — Train-only wiring test ✅ DONE
 
-1. Add test #8 to `tests/test_domain_randomization.py`: assert
-   `get_drift_train_config()` contains a non-empty `domain_randomization`
-   dict and `get_drift_test_config()` does not.
-2. **Verify:** the test passes.
+1. `test_train_configs_have_dr_eval_configs_do_not` added at the bottom of
+   `tests/test_domain_randomization.py`. Asserts:
+   - `DOMAIN_RANDOMIZATION` is non-empty (otherwise the test is vacuous).
+   - Both `get_drift_train_config()` and `get_recovery_train_config()`
+     return a dict whose `domain_randomization` key equals
+     `DOMAIN_RANDOMIZATION`.
+   - Both `get_drift_test_config()` and `get_recovery_test_config()` return
+     a dict whose `domain_randomization` key is falsy (absent or `None`).
+2. **Verified:** `python3 -m pytest tests/test_domain_randomization.py -v`
+   → 10 passed in 9.0s.
 
 ### Step 6 — End-to-end smoke
 
-1. Run `python3 -m pytest` — full suite green.
+1. Run `python3 -m pytest` — full suite should be green.
 2. Run a short training session: `python3 train/ppo_race.py --m t` for ≈5k
    steps. Watch `instability_truncation` rate in the wandb run; it should
    be comparable to a baseline (DR-disabled) run. If it spikes, lower σ in
-   the YAML or revisit `_DR_CLIP_K`.
+   the YAML or revisit `dr_clip_k`.
 
 ### Tips while implementing
 
-- After each step, `git diff` and confirm the only changes are the ones the
-  step describes. The plumbing is small enough that any unexpected diff is a
-  signal to slow down.
-- If a test fails at step 3, the most likely culprit is forgetting
-  `deepcopy` — perturbing `self._base_params` in place will silently corrupt
-  the baseline and the no-compounding test will catch it.
 - The order matters: DR must run **before** `self.sim.reset(...)` because
   `update_params` writes into `RaceCar.params`, and the dynamics integrator
   reads from there during the very first integration step.
+- If a regression appears in the no-compounding test, the most likely
+  culprit is a missing `deepcopy` — perturbing `self._base_params` in place
+  silently corrupts the baseline.

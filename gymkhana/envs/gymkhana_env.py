@@ -26,6 +26,7 @@ Authors: Hongrui Zheng, Teodor Ilie
 """
 
 # gym imports
+import copy
 import warnings
 
 import gymnasium as gym
@@ -167,6 +168,11 @@ class GKEnv(gym.Env):
 
         self.seed = self.config["seed"]
         self.params = self.config["params"]
+
+        # Immutable baseline that the DR loop in reset() perturbs off of.
+        self._base_params = copy.deepcopy(self.params)
+        self.dr_sigmas = self.config.get("domain_randomization") or {}
+        self.dr_clip_k = self.config["dr_clip_k"]
         self.num_agents = self.config["num_agents"]
         self.timestep = self.config["timestep"]
         self.ego_idx = self.config["ego_idx"]
@@ -581,6 +587,8 @@ class GKEnv(gym.Env):
             "control_input": ["speed", "steering_angle"],
             "observation_config": {"type": None},
             "reset_config": {"type": None},
+            "domain_randomization": None,  # dictionary of domain randomization parameter perturbations
+            "dr_clip_k": 3.0,  # clip DR multiplier at ±k * σ; prevents extreme samples
             "scale": 1.0,
             "num_beams": 1080,
             "render_config": None,  # dict of overrides for rendering.yaml fields, or None to use packaged defaults
@@ -1102,6 +1110,15 @@ class GKEnv(gym.Env):
         if seed is not None:
             np.random.seed(seed=seed)
         super().reset(seed=seed)
+
+        # Domain randomization: perturb selected params by multiplicative Gaussian Noise X~N(1, σ), clipped at ±dr_clip_k·σ.
+        if self.dr_sigmas:
+            perturbed = copy.deepcopy(self._base_params)
+            for name, sigma in self.dr_sigmas.items():
+                delta = self.dr_clip_k * sigma
+                mult = np.clip(np.random.normal(1.0, sigma), 1.0 - delta, 1.0 + delta)
+                perturbed[name] = self._base_params[name] * mult
+            self.update_params(perturbed)
 
         # Re-randomize direction for random
         if self.track_direction_config == "random":

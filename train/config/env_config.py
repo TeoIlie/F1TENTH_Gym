@@ -59,6 +59,9 @@ PARAMS = GKEnv.f1tenth_std_vehicle_params()
 TEST_DEBUG_RENDER = _config["test_debug_render"]
 TRAIN_DEBUG_RENDER = _config["train_debug_render"]
 
+# Domain randomization
+DOMAIN_RANDOMIZATION = _config.get("domain_randomization")
+
 # Callback config
 CKPT_SAVE_FREQ = _config["ckpt_save_freq"]
 N_EVAL_EPISODES = _config["n_eval_episodes"]
@@ -149,7 +152,7 @@ def get_drift_train_config():
     """
     Returns gym drift TRAINING environment config
     """
-    return {**_base_config(TRAIN_DEBUG_RENDER), **_drift_overrides()}
+    return {**_base_config(TRAIN_DEBUG_RENDER), **_drift_overrides(), "domain_randomization": DOMAIN_RANDOMIZATION}
 
 
 def get_recovery_test_config():
@@ -163,7 +166,7 @@ def get_recovery_train_config():
     """
     Returns gym recovery TRAINING environment config
     """
-    return {**_base_config(TRAIN_DEBUG_RENDER), **_recovery_overrides()}
+    return {**_base_config(TRAIN_DEBUG_RENDER), **_recovery_overrides(), "domain_randomization": DOMAIN_RANDOMIZATION}
 
 
 def get_curriculum_config():

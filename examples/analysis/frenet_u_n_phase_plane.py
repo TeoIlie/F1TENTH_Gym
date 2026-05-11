@@ -299,6 +299,7 @@ def main():
     # 2. Create evaluation environment (no rendering for faster data collection)
     print("\nCreating evaluation environment...")
     config = get_drift_train_config()
+    config["domain_randomization"] = None  # phase plane wants deterministic physics
     env = gym.make(
         get_env_id(),
         config=config,
