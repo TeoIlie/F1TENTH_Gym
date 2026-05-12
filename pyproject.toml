@@ -72,6 +72,7 @@ pre-commit = "^4.5.1"
 salib = "^1.5.2"
 optuna = "^4.8.0"
 cmaes = "^0.13.0"
+optuna-dashboard = "^0.20.0"
 
 [tool.poetry.group.train.dependencies]
 wandb = "^0.17.0"
