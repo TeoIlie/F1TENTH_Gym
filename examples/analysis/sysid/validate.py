@@ -10,6 +10,9 @@ Given a 100 Hz Vicon NPZ bag and a parameter set, produces:
 To compare two parameter sets, run twice with different `--params` /
 `--out-dir` and diff `metrics.txt`. Replaces the prior split between
 `compare_loss.py` and the `__main__` blocks of `dataset.py` / `rollout.py`.
+
+Example:
+  python -m examples.analysis.sysid.validate --bag bag.npz [--params tuned.yaml] [--mirror] [--out-dir DIR]
 """
 
 from __future__ import annotations
