@@ -239,7 +239,7 @@ def test_lf_perturbation_preserves_wheelbase(env1):
     for s in range(200):
         env1.reset(seed=s)
         p = env1.sim.agents[0].params
-        assert p["lf"] + p["lr"] == L_base, f"wheelbase drift: {p['lf'] + p['lr']} vs {L_base}"
+        assert p["lf"] + p["lr"] == pytest.approx(L_base), f"wheelbase drift: {p['lf'] + p['lr']} vs {L_base}"
         lf_mults.append(p["lf"] / env1._base_params["lf"])
     lf_mults = np.asarray(lf_mults)
     assert abs(lf_mults.mean() - 1.0) < 0.05

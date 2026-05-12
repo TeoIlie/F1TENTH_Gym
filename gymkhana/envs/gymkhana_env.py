@@ -597,7 +597,6 @@ class GKEnv(gym.Env):
             "reset_config": {"type": None},
             "domain_randomization": None,  # dictionary of domain randomization parameter perturbations
             "dr_clip_k": 3.0,  # clip DR multiplier at ±k * σ; prevents extreme samples
-            "scale": 1.0,
             "num_beams": 1080,
             "render_config": None,  # dict of overrides for rendering.yaml fields, or None to use packaged defaults
             "render_track_lines": False,
