@@ -96,7 +96,7 @@ def train(profile: TrainingProfile):
     save_full_gym_config(profile.train_config, config_dir, GYM_YAML)
 
     env = make_subprocvecenv(SEED, profile.train_config, N_ENVS, profile.track_pool)
-    eval_env = make_eval_env(EVAL_SEED, profile.train_config)
+    eval_env = make_eval_env(EVAL_SEED, profile.test_config)
 
     learning_rate = linear_schedule(START_LEARNING_RATE, END_LEARNING_RATE)
 
@@ -242,7 +242,7 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
 
     # Uses current env_config.py
     env = make_subprocvecenv(SEED, profile.train_config, N_ENVS, profile.track_pool)
-    eval_env = make_eval_env(EVAL_SEED, profile.train_config)
+    eval_env = make_eval_env(EVAL_SEED, profile.test_config)
 
     model = PPO.load(model_path, env=env, device="auto")
 
@@ -367,7 +367,7 @@ def transfer_train(
 
     # Uses current env_config.py
     env = make_subprocvecenv(SEED, profile.train_config, N_ENVS, profile.track_pool)
-    eval_env = make_eval_env(EVAL_SEED, profile.train_config)
+    eval_env = make_eval_env(EVAL_SEED, profile.test_config)
 
     model = PPO.load(model_path, env=env, device="auto")
     model.tensorboard_log = tensorboard_dir

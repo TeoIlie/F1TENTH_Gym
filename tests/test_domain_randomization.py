@@ -310,6 +310,31 @@ def test_validation_rejects_out_of_range_sigma(bad_sigma):
         _make_env_with_dr(dr_config={"m": bad_sigma})
 
 
+def test_make_eval_env_disables_train_only_features():
+    """``make_eval_env`` must produce an env free of train-only side effects.
+
+    Specifically: DR must be inert (otherwise periodic eval rollouts run on
+    perturbed params and corrupt best-model selection) and
+    ``record_obs_min_max`` must be off (otherwise eval pollutes the
+    cumulative obs-bounds tracker that's only meant to summarize training
+    rollouts).
+    """
+    from train.config.env_config import get_drift_test_config, get_recovery_test_config
+    from train.train_utils import make_eval_env
+
+    for getter in (get_drift_test_config, get_recovery_test_config):
+        eval_env = make_eval_env(seed=0, config=getter())
+        try:
+            assert eval_env.unwrapped.dr_sigmas == {}, (
+                f"{getter.__name__} eval env has active DR: {eval_env.unwrapped.dr_sigmas}"
+            )
+            assert eval_env.unwrapped.record_obs_min_max is False, (
+                f"{getter.__name__} eval env has record_obs_min_max enabled"
+            )
+        finally:
+            eval_env.close()
+
+
 def test_validation_accepts_valid_dr_config():
     """Sanity: a well-formed DR config builds without error."""
     env = _make_env_with_dr(dr_config={"m": 0.05, "I": 0.1}, dr_clip_k=2.5)
