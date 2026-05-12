@@ -133,6 +133,39 @@ python -m examples.analysis.sysid.sensitivity --path <bag>.npz --candidates stag
 
 Outputs CSV + console ranking. The richer Phase-2 outputs (markdown report, plots, coverage histograms) were one-shot deliverables; their archived versions live under `figures/analysis/sysid/sensitivity/` and the locked findings are in `OPTUNA_SYS_ID_SENSITIVITY_REPORT.md`.
 
+## Bags to collect
+
+Per stage: 1–2 longer training bags, 1–2 shorter validation bags, 1–2 shorter test bags. Run `sensitivity.py` on each stage's bag with that stage's candidate group before launching Optuna; require top-N params to clearly dominate the floor.
+
+### 1. STEER_LAG — high-friction tires, yaw/heading/XY-weighted loss
+- [ ] Train: rapid hard L / hard R step-steers + slower L/R + rapid slalom (slow speed)
+- [ ] Train (optional 2nd): same maneuvers, different speed band
+- [ ] Val: short slalom
+- [ ] Val (optional): short step-steer sequence
+- [ ] Test: held-out steer profile (e.g. different amplitude)
+
+**Switch to low-friction tires + balanced channel weights for all stages below.**
+
+### 2. VEHICLE_DYN
+- [ ] Train: mix of slow + fast + light drifting
+- [ ] Train (optional): second mixed bag, different track section
+- [ ] Val: short mixed clip
+- [ ] Test: held-out speed/drift regime
+
+### 3. STAGE1 — longitudinal + primary tire
+- [ ] Smoke-test reverse driving through `Rollout.run` before collecting (verify finite per-channel loss)
+- [ ] Train: hard accel + hard brake
+- [ ] Train: hard reverse + hard brake (if smoke test passes)
+- [ ] Train: slow + fast corners
+- [ ] Val: short accel/brake clip
+- [ ] Test: held-out corner radius or brake intensity
+
+### 4. STAGE2 / STAGE3 / FINE_TUNE — mixed driving
+- [ ] Train: mixed-regime bag 1
+- [ ] Train (optional): mixed-regime bag 2
+- [ ] Val: short mixed clip
+- [ ] Test: held-out regime
+
 ## Pre-launch verification
 
 1. `python -m pytest tests/sysid/ -q` — all green (~30 s).
