@@ -35,7 +35,7 @@ class TestRecoveryConfig(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
@@ -97,7 +97,7 @@ class TestRecoveryReset(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
@@ -151,7 +151,7 @@ class TestRecoverySuccess(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
@@ -186,7 +186,7 @@ class TestRecoveryReward(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):

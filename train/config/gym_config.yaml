@@ -49,6 +49,12 @@ recovery_project_name: "f1tenth-ppo-recover"
 recovery_training_mode: "recover"
 recovery_track_pool: null # train only on IMS
 
+# Domain randomization - multiplicative Gaussian noise from N(1, sigma) applied to selected params 
+# comment out to disable DR
+domain_randomization:
+  m: 0.05
+  I_z: 0.02
+
 # Curriculum learning - gradually expand recovery state ranges
 curriculum:
   # see train/callbacks.py for more details about parameter uses

@@ -26,6 +26,7 @@ Authors: Hongrui Zheng, Teodor Ilie
 """
 
 # gym imports
+import copy
 import warnings
 
 import gymnasium as gym
@@ -44,6 +45,13 @@ from .rendering import make_renderer
 from .reset import make_reset_fn
 from .track import Track
 from .utils import deep_update
+
+# Params forbidden in `domain_randomization`, mapped to the canonical partner
+# the user should randomize instead: lr tracks lf (preserve wheelbase);
+# s_min/sv_min mirror s_max/sv_max.
+_DR_FORBIDDEN_PARAMS = {"lr": "lf", "s_min": "s_max", "sv_min": "sv_max"}
+_DR_SIGMA_MIN = 0.0
+_DR_SIGMA_MAX = 0.2
 
 
 def print_obs_min_max_stats(tracker, step_count, features, bounds, normalize_obs):
@@ -167,6 +175,12 @@ class GKEnv(gym.Env):
 
         self.seed = self.config["seed"]
         self.params = self.config["params"]
+
+        # Immutable baseline that the DR loop in reset() perturbs off of.
+        self._base_params = copy.deepcopy(self.params)
+        self.dr_sigmas = self.config.get("domain_randomization") or {}
+        self.dr_clip_k = self.config["dr_clip_k"]
+        self._validate_dr_config()
         self.num_agents = self.config["num_agents"]
         self.timestep = self.config["timestep"]
         self.ego_idx = self.config["ego_idx"]
@@ -581,7 +595,8 @@ class GKEnv(gym.Env):
             "control_input": ["speed", "steering_angle"],
             "observation_config": {"type": None},
             "reset_config": {"type": None},
-            "scale": 1.0,
+            "domain_randomization": None,  # dictionary of domain randomization parameter perturbations
+            "dr_clip_k": 3.0,  # clip DR multiplier at ±k * σ; prevents extreme samples
             "num_beams": 1080,
             "render_config": None,  # dict of overrides for rendering.yaml fields, or None to use packaged defaults
             "render_track_lines": False,
@@ -653,6 +668,27 @@ class GKEnv(gym.Env):
                     timestep=self.timestep,
                 )
                 self.action_space = from_single_to_multi_action_space(self.action_type.space, self.num_agents)
+
+    def _validate_dr_config(self) -> None:
+        """Fail fast on a malformed ``domain_randomization`` dict."""
+        for name, sigma in self.dr_sigmas.items():
+            if name not in self._base_params:
+                raise ValueError(
+                    f"domain_randomization key {name!r} is not a vehicle parameter. "
+                    f"Valid keys: {sorted(self._base_params)}"
+                )
+            canonical = _DR_FORBIDDEN_PARAMS.get(name)
+            if canonical is not None:
+                raise ValueError(
+                    f"domain_randomization key {name!r} is derived from {canonical!r}; "
+                    f"randomize {canonical!r} instead and {name!r} will be set automatically. "
+                    f"Listing both in domain_randomization is not supported."
+                )
+            if not (_DR_SIGMA_MIN < sigma < _DR_SIGMA_MAX):
+                raise ValueError(
+                    f"domain_randomization sigma for {name!r} must be in "
+                    f"({_DR_SIGMA_MIN}, {_DR_SIGMA_MAX}), got {sigma!r}"
+                )
 
     def _resolve_direction(self) -> None:
         """Set ``self.direction_reversed`` from ``self.track_direction_config``.
@@ -1102,6 +1138,22 @@ class GKEnv(gym.Env):
         if seed is not None:
             np.random.seed(seed=seed)
         super().reset(seed=seed)
+
+        # Domain randomization: perturb selected params by multiplicative Gaussian Noise X~N(1, σ), clipped at ±dr_clip_k·σ.
+        if self.dr_sigmas:
+            perturbed = copy.deepcopy(self._base_params)
+            for name, sigma in self.dr_sigmas.items():
+                delta = self.dr_clip_k * sigma
+                mult = np.clip(np.random.normal(1.0, sigma), 1.0 - delta, 1.0 + delta)
+                perturbed[name] = self._base_params[name] * mult
+            # Re-establish coupled invariants after perturbing the canonical partner.
+            if "lf" in self.dr_sigmas:
+                perturbed["lr"] = self._base_params["lf"] + self._base_params["lr"] - perturbed["lf"]
+            if "s_max" in self.dr_sigmas:
+                perturbed["s_min"] = -perturbed["s_max"]
+            if "sv_max" in self.dr_sigmas:
+                perturbed["sv_min"] = -perturbed["sv_max"]
+            self.update_params(perturbed)
 
         # Re-randomize direction for random
         if self.track_direction_config == "random":
