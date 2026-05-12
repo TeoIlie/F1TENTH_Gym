@@ -432,20 +432,45 @@ def _plot_rollout_overlay(
 
 
 def _format_channel_table(per_channel: dict[str, float]) -> list[str]:
-    """Per-channel breakdown as a 3-column table: contribution | raw MSE | coeff.
+    """Per-channel breakdown: contribution | raw MSE | coeff | balanced_coeff.
 
     `contribution = coeff · raw`, so raw is recovered by division. When
     `coeff == 0` the channel is plumbed but disabled — raw is not knowable
     from contribution alone, so it's reported as `n/a`.
+
+    `balanced_coeff = 1 / raw_MSE`: the coefficient that would make this
+    channel contribute exactly 1.0 at the current params. Drop these in as
+    CHANNEL_COEFFS to balance contributions across channels at nominal.
     """
-    header = f"{'channel':<10} {'contribution':>14} {'raw_MSE':>14} {'coeff':>10}"
+    header = f"{'channel':<10} {'contribution':>14} {'raw_MSE':>14} {'coeff':>10} {'balanced_coeff':>16}"
     rule = "-" * len(header)
     lines = [header, rule]
+    balanced: dict[str, float | None] = {}
     for ch in CHANNELS:
         contrib = per_channel.get(ch, float("nan"))
         coeff = CHANNEL_COEFFS[ch]
-        raw_str = f"{contrib / coeff:>14.6f}" if coeff != 0.0 else f"{'n/a':>14}"
-        lines.append(f"{ch:<10} {contrib:>14.6f} {raw_str} {coeff:>10.4f}")
+        if coeff != 0.0:
+            raw = contrib / coeff
+            raw_str = f"{raw:>14.6f}"
+            if raw > 0.0:
+                bal = 1.0 / raw
+                balanced[ch] = bal
+                bal_str = f"{bal:>16.6f}"
+            else:
+                balanced[ch] = None
+                bal_str = f"{'n/a':>16}"
+        else:
+            balanced[ch] = None
+            raw_str = f"{'n/a':>14}"
+            bal_str = f"{'n/a':>16}"
+        lines.append(f"{ch:<10} {contrib:>14.6f} {raw_str} {coeff:>10.4f} {bal_str}")
+
+    lines.append("")
+    lines.append("balanced CHANNEL_COEFFS (copy-paste into loss.py):")
+    for ch in CHANNELS:
+        bal = balanced[ch]
+        val_str = f"{bal:.4f}" if bal is not None else "None  # n/a"
+        lines.append(f'    "{ch}": {val_str},')
     return lines
 
 

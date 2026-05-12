@@ -102,11 +102,12 @@ def apply_trial_params(base_params: dict, trial_values: dict[str, float]) -> dic
 # decisions. Cheap (runs once on first import) and prevents silent bugs where
 # Optuna would suggest a value for a key that doesn't exist in the params dict.
 def _validate_spaces() -> None:
-    all_search_keys: set[str] = set()
+    # Cross-stage key overlap is intentionally allowed: a param may appear in
+    # multiple stages (e.g. coarse fit in one, refinement in another). Running
+    # a later stage will re-search and overwrite the earlier stage's value —
+    # caller is responsible for stage ordering.
     for stage, space in STAGE_SPACES.items():
         for name, dist in space.items():
-            if name in all_search_keys:
-                raise AssertionError(f"Stage {stage}: {name!r} appears in multiple stages")
             if name not in SYSID_PARAMS:
                 raise AssertionError(f"Stage {stage}: {name!r} not in SYSID_PARAMS")
             if name in FROZEN_PARAMS:
@@ -121,7 +122,6 @@ def _validate_spaces() -> None:
                         f"Stage {stage}: {name!r} is log-distributed but has non-positive bound "
                         f"(low={dist.low}, high={dist.high})"
                     )
-        all_search_keys |= set(space.keys())
 
 
 _validate_spaces()

@@ -3,8 +3,10 @@
 CLI::
 
     python -m examples.analysis.sysid.study \\
-        --bag <path> --stage {1,2} --n-trials 500 \\
-        [--base-params <yaml>]   # required for stage 2
+        --bag <path> --stage <name> --n-trials 500 \\
+        [--base-params <yaml>]   # default: SYSID_PARAMS
+
+Stage names come from ``STAGE_SPACES`` in ``search_spaces.py``.
 
 Re-running with the same study-name continues an existing study (Optuna's
 ``load_if_exists=True``). For parallelism, launch the same CLI N times in
@@ -134,10 +136,8 @@ def dump_best_params(study: optuna.Study, base_params: dict, out_yaml_path: Path
 # ----- CLI ------------------------------------------------------------------
 
 
-def _load_base_params(stage: int, override: str | None) -> dict:
+def _load_base_params(override: str | None) -> dict:
     if override is None:
-        if stage == 2:
-            raise SystemExit("--base-params is required for stage 2 (point at stage-1 best YAML)")
         return dict(SYSID_PARAMS)
     with Path(override).open("r") as f:
         return yaml.safe_load(f)
@@ -146,14 +146,14 @@ def _load_base_params(stage: int, override: str | None) -> dict:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m examples.analysis.sysid.study")
     p.add_argument("--bag", required=True)
-    p.add_argument("--stage", type=int, required=True, choices=(1, 2))
+    p.add_argument("--stage", required=True, choices=tuple(STAGE_SPACES.keys()))
     p.add_argument("--n-trials", type=int, default=500)
-    p.add_argument("--base-params", default=None, help="YAML to load (required for stage 2)")
-    p.add_argument("--study-name", default=None, help="Default: <bag_stem>_stage{N}")
+    p.add_argument("--base-params", default=None, help="YAML to load (default: SYSID_PARAMS)")
+    p.add_argument("--study-name", default=None, help="Default: <bag_stem>_<stage>")
     p.add_argument(
         "--storage", default=None, help="Path to the Optuna journal file. Default: <repo>/studies/<study_name>.journal"
     )
-    p.add_argument("--out-yaml", default=None, help="Default: gymkhana/envs/params/f1tenth_std_optuna_stage{N}.yaml")
+    p.add_argument("--out-yaml", default=None, help="Default: gymkhana/envs/params/f1tenth_std_optuna_<stage>.yaml")
     p.add_argument(
         "--mirror",
         action=argparse.BooleanOptionalAction,
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     if not bag.exists():
         raise SystemExit(f"Bag not found: {bag}")
 
-    name = args.study_name or f"{bag.stem}_stage{args.stage}"
+    name = args.study_name or f"{bag.stem}_{args.stage}"
     journal_path = (
         Path(args.storage).resolve()
         if args.storage is not None
@@ -180,11 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     out_yaml = (
         Path(args.out_yaml).resolve()
         if args.out_yaml
-        else REPO_ROOT / "gymkhana" / "envs" / "params" / f"f1tenth_std_optuna_stage{args.stage}.yaml"
+        else REPO_ROOT / "gymkhana" / "envs" / "params" / f"f1tenth_std_optuna_{args.stage}.yaml"
     )
 
     space = STAGE_SPACES[args.stage]
-    base_params = _load_base_params(args.stage, args.base_params)
+    base_params = _load_base_params(args.base_params)
 
     _LOG.info("Loading dataset from %s (mirror=%s)", bag, args.mirror)
     dataset = load_dataset(str(bag), mirror=args.mirror)
@@ -208,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     with wandb.init(**wandb_init_kwargs) as wandb_run, Rollout(params=base_params) as rollout:
         objective = Objective(dataset, rollout, base_params, space, wandb_run=wandb_run)
-        _LOG.info("Running %d trials (stage=%d, |space|=%d, seed=%d)", args.n_trials, args.stage, len(space), SEED)
+        _LOG.info("Running %d trials (stage=%s, |space|=%d, seed=%d)", args.n_trials, args.stage, len(space), SEED)
         study.optimize(objective, n_trials=args.n_trials)
         # Objective maps divergence to TrialPruned; if every trial pruned, best_value/best_params raise.
         has_completed = any(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
