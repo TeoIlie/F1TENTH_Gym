@@ -45,14 +45,6 @@ SEED = 42
 
 WANDB_PROJECT = "f1tenth-sysid"
 
-# Phase-1 baseline values (YAML defaults, no mirror) for known bags. Logged to
-# wandb config so the run is self-describing — gives a horizontal "what we're
-# trying to beat" reference. Unknown bags log None.
-PHASE1_BASELINES: dict[str, float] = {
-    "circle_Apr6_100Hz": 5.02,
-    "rosbag2_2026_05_04-17_54_17_100Hz": 27.4,
-}
-
 
 class Objective:
     """Optuna objective: suggest, hot-swap params, score with dataset_loss.
@@ -212,7 +204,6 @@ def main(argv: list[str] | None = None) -> int:
             "seed": SEED,
             "mirror": args.mirror,
             "search_space": {k: [d.low, d.high] for k, d in space.items()},
-            "baseline_phase1": PHASE1_BASELINES.get(bag.stem),
         },
     )
     with wandb.init(**wandb_init_kwargs) as wandb_run, Rollout(params=base_params) as rollout:
