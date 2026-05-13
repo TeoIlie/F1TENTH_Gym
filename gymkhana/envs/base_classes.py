@@ -146,10 +146,6 @@ class RaceCar(object):
         self.prev_throttle_cmd = 0.0
         self.curr_throttle_cmd = 0.0
 
-        # previous, current actual acceleration command
-        self.prev_accl_cmd = 0.0
-        self.curr_accl_cmd = 0.0
-
         # previous, current average wheel angular velocity (for STD model)
         self.prev_avg_wheel_omega = 0.0
         self.curr_avg_wheel_omega = 0.0
@@ -242,9 +238,6 @@ class RaceCar(object):
         # clear previous and current throttle commands
         self.prev_throttle_cmd = 0.0
         self.curr_throttle_cmd = 0.0
-        # clear previous, current actual acceleration command
-        self.prev_accl_cmd = 0.0
-        self.curr_accl_cmd = 0.0
         # clear previous, current average wheel angular velocity
         self.prev_avg_wheel_omega = 0.0
         self.curr_avg_wheel_omega = 0.0
@@ -360,11 +353,8 @@ class RaceCar(object):
 
         accl, sv = self.action_type.act(action=(steer, raw_throttle), state=self.state, params=self.params)
 
-        # acceleration: update prev to curr, and current to new throttle cmd accl
-        self.prev_accl_cmd = self.curr_accl_cmd
-        self.curr_accl_cmd = accl
-
-        # integrated velocity command: integrate acceleration over time and clip to [v_min, v_max]
+        # Integrate accl into a velocity command. Reproducible on hardware in accl mode by
+        # re-applying AcclAction scaling to the cached raw throttle (guarded at obs construction).
         self.integrated_vel_cmd = self.integrated_vel_cmd + accl * self.time_step
         self.integrated_vel_cmd = np.clip(self.integrated_vel_cmd, self.params["v_min"], self.params["v_max"])
 

@@ -24,7 +24,7 @@ def display_drift_obs(step, obs, reward, lookahead_n_points, total_reward=None):
     delta = obs[5]
     beta = obs[6]
     prev_steer_cmd = obs[7]
-    prev_accl_cmd = obs[8]
+    prev_throttle_cmd = obs[8]
     prev_avg_wheel_omega = obs[9]
     integrated_vel_cmd = obs[10]
     curvatures = obs[11 : 11 + lookahead_n_points]
@@ -36,7 +36,7 @@ def display_drift_obs(step, obs, reward, lookahead_n_points, total_reward=None):
         f"  vx={vx:6.2f}, vy={vy:6.2f}, yaw_rate={yaw_rate:6.2f}, delta={delta:6.4f}, beta={beta:6.4f}\n"
         f"  heading error (degrees)={heading_error_degrees:6.2f}, lateral distance={lateral_dist:6.2f}\n"
         f"  previous steering cmd={prev_steer_cmd:6.4f}\n"
-        f"  previous accl cmd={prev_accl_cmd:6.4f}\n"
+        f"  previous throttle cmd={prev_throttle_cmd:6.4f}\n"
         f"  previous average wheel ang speed={prev_avg_wheel_omega:6.4f}\n"
         f"  integrated velocity command={integrated_vel_cmd:6.4f}\n"
         f"  curvature lookahead:"

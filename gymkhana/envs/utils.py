@@ -100,38 +100,78 @@ def calculate_norm_bounds(env, features: list[str]):
     # 2. CONTROL INPUT BOUNDS
     # ===========================
 
-    # Steering: [s_min, s_max]
-    if "delta" in features_set or "prev_steering_cmd" in features_set:
+    # Steering angle: [s_min, s_max]
+    if "delta" in features_set:
         s_min = params.get("s_min", None)
         s_max = params.get("s_max", None)
         if s_min is None or s_max is None:
+            raise ValueError("Feature 'delta' requires 's_min' and 's_max' parameters. Please configure in env.params.")
+        bounds["delta"] = (s_min, s_max)
+
+    # Cached once; reused by both cmd blocks below in their unnormalized branches.
+    steer_type, long_type = env.unwrapped.action_type.type
+
+    # {prev,curr}_steering_cmd: bounds are [-1,1] under normalize_act, else physical bounds
+    # of the active steering action (angle or speed). prev and curr share identical bounds.
+    if "prev_steering_cmd" in features_set or "curr_steering_cmd" in features_set:
+        if env.unwrapped.normalize_act:
+            steer_cmd_bounds = (-1.0, 1.0)
+        elif steer_type == "steering_angle":
+            s_min = params.get("s_min", None)
+            s_max = params.get("s_max", None)
+            if s_min is None or s_max is None:
+                raise ValueError(
+                    "Features 'prev_steering_cmd' / 'curr_steering_cmd' under 'steering_angle' control "
+                    "require 's_min' and 's_max'."
+                )
+            steer_cmd_bounds = (s_min, s_max)
+        elif steer_type == "steering_speed":
+            sv_min = params.get("sv_min", None)
+            sv_max = params.get("sv_max", None)
+            if sv_min is None or sv_max is None:
+                raise ValueError(
+                    "Features 'prev_steering_cmd' / 'curr_steering_cmd' under 'steering_speed' control "
+                    "require 'sv_min' and 'sv_max'."
+                )
+            steer_cmd_bounds = (sv_min, sv_max)
+        else:
             raise ValueError(
-                "Features 'delta' and 'prev_steering_cmd' require 's_min' and 's_max' parameters. "
-                "Please configure in env.params."
+                f"Unknown steering action type '{steer_type}' for prev_steering_cmd / curr_steering_cmd bounds."
             )
-        if "delta" in features_set:
-            bounds["delta"] = (s_min, s_max)
         if "prev_steering_cmd" in features_set:
-            if env.unwrapped.normalize_act:
-                # if the actions are normalized, the raw steering command is recorded in prev_steering_cmd
-                # which is in range (-1, 1)
-                bounds["prev_steering_cmd"] = (-1, 1)
-            else:
-                # else, for unnormalized actions the bounds are taken from the params
-                bounds["prev_steering_cmd"] = (s_min, s_max)
+            bounds["prev_steering_cmd"] = steer_cmd_bounds
+        if "curr_steering_cmd" in features_set:
+            bounds["curr_steering_cmd"] = steer_cmd_bounds
 
-    # Acceleration: symmetric about zero (negative acceleration is braking)
-    if "prev_accl_cmd" in features_set or "curr_accl_cmd" in features_set:
-        a_max = params.get("a_max", None)
-        if a_max is None:
+    # {prev,curr}_throttle_cmd: bounds are [-1,1] under normalize_act, else (-a_max, a_max)
+    # in accl mode or (v_min, v_max) in speed mode. prev and curr share identical bounds.
+    if "prev_throttle_cmd" in features_set or "curr_throttle_cmd" in features_set:
+        if env.unwrapped.normalize_act:
+            throttle_cmd_bounds = (-1.0, 1.0)
+        elif long_type == "accl":
+            a_max = params.get("a_max", None)
+            if a_max is None:
+                raise ValueError(
+                    "Features 'prev_throttle_cmd' / 'curr_throttle_cmd' under 'accl' control require 'a_max'."
+                )
+            throttle_cmd_bounds = (-a_max, a_max)
+        elif long_type == "speed":
+            v_min = params.get("v_min", None)
+            v_max = params.get("v_max", None)
+            if v_min is None or v_max is None:
+                raise ValueError(
+                    "Features 'prev_throttle_cmd' / 'curr_throttle_cmd' under 'speed' control "
+                    "require 'v_min' and 'v_max'."
+                )
+            throttle_cmd_bounds = (v_min, v_max)
+        else:
             raise ValueError(
-                "Features 'prev_accl_cmd' or 'curr_accl_cmd' require 'a_max' parameter. Please configure in env.params."
+                f"Unknown longitudinal action type '{long_type}' for prev_throttle_cmd / curr_throttle_cmd bounds."
             )
-
-        if "prev_accl_cmd" in features_set:
-            bounds["prev_accl_cmd"] = (-a_max, a_max)
-        if "curr_accl_cmd" in features_set:
-            bounds["curr_accl_cmd"] = (-a_max, a_max)
+        if "prev_throttle_cmd" in features_set:
+            bounds["prev_throttle_cmd"] = throttle_cmd_bounds
+        if "curr_throttle_cmd" in features_set:
+            bounds["curr_throttle_cmd"] = throttle_cmd_bounds
 
     # ===========================
     # 3. WHEEL DYNAMICS BOUNDS
@@ -215,8 +255,9 @@ def calculate_norm_bounds(env, features: list[str]):
             f"Cannot calculate bounds for features: {missing_features}. "
             f"These features either don't support normalization or are unknown. "
             f"Supported features: linear_vel_x, linear_vel_y, ang_vel_z, delta, "
-            f"prev_steering_cmd, prev_accl_cmd, curr_accl_cmd, prev_avg_wheel_omega, "
-            f"curr_avg_wheel_omega, integrated_vel_cmd, frenet_u, frenet_n, lookahead_widths, lookahead_curvatures, beta"
+            f"prev_steering_cmd, curr_steering_cmd, prev_throttle_cmd, curr_throttle_cmd, "
+            f"prev_avg_wheel_omega, curr_avg_wheel_omega, integrated_vel_cmd, "
+            f"frenet_u, frenet_n, lookahead_widths, lookahead_curvatures, beta"
         )
 
     # Ensure all bounds have min <= max (allow min == max for constant features)

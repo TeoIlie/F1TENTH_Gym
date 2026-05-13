@@ -352,7 +352,7 @@ def test_sparse_width_obs_observation_filtering():
         "delta",
         "beta",
         "prev_steering_cmd",
-        "prev_accl_cmd",
+        "prev_throttle_cmd",
         "prev_avg_wheel_omega",
         "integrated_vel_cmd",
         "lookahead_curvatures",

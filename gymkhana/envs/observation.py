@@ -715,8 +715,9 @@ class VectorObservation(Observation):
             "frenet_u": 1,
             "frenet_n": 1,
             "prev_steering_cmd": 1,
-            "prev_accl_cmd": 1,
-            "curr_accl_cmd": 1,
+            "prev_throttle_cmd": 1,
+            "curr_steering_cmd": 1,
+            "curr_throttle_cmd": 1,
             "lookahead_curvatures": lookahead_points,
             "lookahead_widths": 2 if self.env.unwrapped.sparse_width_obs else lookahead_points,
             "curr_avg_wheel_omega": 1,
@@ -806,8 +807,9 @@ class VectorObservation(Observation):
             "frenet_u": frenet_u,
             "frenet_n": frenet_n,
             "prev_steering_cmd": agent.prev_steering_cmd,
-            "prev_accl_cmd": agent.prev_accl_cmd,
-            "curr_accl_cmd": agent.curr_accl_cmd,
+            "prev_throttle_cmd": agent.prev_throttle_cmd,
+            "curr_steering_cmd": agent.curr_steering_cmd,
+            "curr_throttle_cmd": agent.curr_throttle_cmd,
             "lookahead_curvatures": lookahead_curvatures,
             "lookahead_widths": lookahead_widths,
             "curr_avg_wheel_omega": curr_avg_wheel_omega,
@@ -898,8 +900,8 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
             "ang_vel_z",  # r - yaw rate
             "delta",  # δ - measured steering angle
             "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
-            "prev_steering_cmd",  # δ_ref - previous commanded steering angle
-            "prev_accl_cmd",  # ω_dot_ref - last control input (acceleration)
+            "prev_steering_cmd",  # δ_ref - previous raw action[0]
+            "prev_throttle_cmd",  # u_long_ref - previous raw action[1]
             "prev_avg_wheel_omega",  # ω - previous measured wheel speed
             "integrated_vel_cmd",  # ω_ref - velocity command integrated from acceleration (requires accl control)
             "lookahead_curvatures",  # c - track curvatures
