@@ -266,7 +266,7 @@ class TestDriftObservation(unittest.TestCase):
             + 1  # prev_steering_cmd
             + 1  # prev_accl_cmd
             + 1  # prev_avg_wheel_omega
-            + 1  # curr_vel_cmd
+            + 1  # integrated_vel_cmd
             + self.lookahead_n_points  # lookahead_curvatures
             + self.lookahead_n_points  # lookahead_widths
         )
@@ -492,13 +492,13 @@ class TestDriftObservation(unittest.TestCase):
             msg=f"prev_avg_wheel_omega should be {curr_avg}, got {observed_prev_omega}",
         )
 
-    def test_curr_vel_cmd(self):
-        """Test that curr_vel_cmd holds integrated velocity command"""
+    def test_integrated_vel_cmd(self):
+        """Test that integrated_vel_cmd holds integrated velocity command"""
         obs, _ = self.env.reset()
 
         # Get initial velocity command
         agent = self.env.unwrapped.sim.agents[0]
-        initial_vel_cmd = agent.curr_vel_cmd
+        initial_vel_cmd = agent.integrated_vel_cmd
 
         # Step with constant acceleration
         accl = 0.4
@@ -523,16 +523,16 @@ class TestDriftObservation(unittest.TestCase):
             observed_vel_cmd,
             expected_vel_cmd,
             places=4,
-            msg=f"curr_vel_cmd mismatch: expected {expected_vel_cmd}, got {observed_vel_cmd}",
+            msg=f"integrated_vel_cmd mismatch: expected {expected_vel_cmd}, got {observed_vel_cmd}",
         )
 
-    def test_curr_vel_cmd_multi_step_integration(self):
-        """Test that curr_vel_cmd correctly integrates over multiple time steps"""
+    def test_integrated_vel_cmd_multi_step_integration(self):
+        """Test that integrated_vel_cmd correctly integrates over multiple time steps"""
         obs, _ = self.env.reset()
 
         # Get initial velocity command
         agent = self.env.unwrapped.sim.agents[0]
-        initial_vel_cmd = agent.curr_vel_cmd
+        initial_vel_cmd = agent.integrated_vel_cmd
 
         # Step twice with known acceleration
         accl = 0.3
@@ -558,7 +558,7 @@ class TestDriftObservation(unittest.TestCase):
             observed_vel_cmd,
             expected_vel_cmd_2,
             places=4,
-            msg=f"curr_vel_cmd after 2 steps: expected {expected_vel_cmd_2}, got {observed_vel_cmd}",
+            msg=f"integrated_vel_cmd after 2 steps: expected {expected_vel_cmd_2}, got {observed_vel_cmd}",
         )
 
     def test_lookahead_curvatures(self):
@@ -697,3 +697,29 @@ class TestDriftObservation(unittest.TestCase):
         # Verify temporal shift
         self.assertAlmostEqual(prev_steer_2, curr_steer_1, places=5, msg="Steering command not shifted correctly")
         self.assertAlmostEqual(prev_omega_2, curr_omega_1, places=5, msg="Wheel omega not shifted correctly")
+
+
+class TestIntegratedVelCmdGuard(unittest.TestCase):
+    """integrated_vel_cmd must raise under speed control and construct under accl."""
+
+    def _make_env(self, control_input):
+        config = get_drift_train_config()
+        config["normalize_obs"] = False
+        config["sparse_width_obs"] = False
+        config["control_input"] = control_input
+        config["observation_config"] = {"type": "drift"}
+        return gym.make(get_env_id(), config=config)
+
+    def test_raises_under_speed_mode(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._make_env(["speed", "steering_angle"])
+        msg = str(ctx.exception)
+        self.assertIn("integrated_vel_cmd", msg)
+        self.assertIn("speed", msg)
+
+    def test_constructs_under_accl_mode(self):
+        env = self._make_env(["accl", "steering_angle"])
+        try:
+            env.reset()
+        finally:
+            env.close()

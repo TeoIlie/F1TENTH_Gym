@@ -39,6 +39,7 @@ class TestNormalizationBounds:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_act": True,
                 "normalize_obs": True,
@@ -57,6 +58,7 @@ class TestNormalizationBounds:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_act": False,
                 "normalize_obs": True,
@@ -78,7 +80,7 @@ class TestNormalizationBounds:
             "prev_steering_cmd",
             "prev_accl_cmd",
             "prev_avg_wheel_omega",
-            "curr_vel_cmd",
+            "integrated_vel_cmd",
             "lookahead_curvatures",
             "lookahead_widths",
         ]
@@ -350,6 +352,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -390,6 +393,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": False,
             },
@@ -430,6 +434,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -442,6 +447,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -454,6 +460,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -545,6 +552,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -557,6 +565,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": False,
             },
@@ -943,6 +952,7 @@ class TestPrevSteeringCmdNormalization:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_act": True,
                 "normalize_obs": True,
@@ -953,7 +963,7 @@ class TestPrevSteeringCmdNormalization:
 
         # Get the index of prev_steering_cmd in observation
         # For drift obs: [vx, vy, u, n, omega_z, delta, beta, prev_steer, prev_accl,
-        #                 prev_wheel_omega, curr_vel_cmd, lookahead_curv..., lookahead_width...]
+        #                 prev_wheel_omega, integrated_vel_cmd, lookahead_curv..., lookahead_width...]
         prev_steer_idx = 7  # Based on drift observation structure (beta was added at index 6)
 
         # Test with maximum left steering (-1)
@@ -998,6 +1008,7 @@ class TestPrevSteeringCmdNormalization:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": params,
                 "normalize_act": False,
                 "normalize_obs": True,

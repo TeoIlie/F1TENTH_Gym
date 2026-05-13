@@ -154,8 +154,8 @@ class RaceCar(object):
         self.prev_avg_wheel_omega = 0.0
         self.curr_avg_wheel_omega = 0.0
 
-        # current commanded velocity (integrated from acceleration)
-        self.curr_vel_cmd = 0.0
+        # velocity command integrated from acceleration (only meaningful under accl control)
+        self.integrated_vel_cmd = 0.0
 
         # initialize scan sim
         if RaceCar.scan_simulator is None:
@@ -253,8 +253,8 @@ class RaceCar(object):
             self.state = self.model.get_initial_state(state=state, params=self.params)
         else:
             self.state = self.model.get_initial_state(pose=pose, params=self.params)
-        # initialize commanded velocity to match initial state velocity
-        self.curr_vel_cmd = self.state[3]
+        # initialize integrated velocity command to match initial state velocity
+        self.integrated_vel_cmd = self.state[3]
 
         self.steer_buffer = np.empty((0,))
         # reset scan random generator
@@ -364,9 +364,9 @@ class RaceCar(object):
         self.prev_accl_cmd = self.curr_accl_cmd
         self.curr_accl_cmd = accl
 
-        # commanded velocity: integrate using acceleration and clip between v_min and v_max
-        self.curr_vel_cmd = self.curr_vel_cmd + accl * self.time_step
-        self.curr_vel_cmd = np.clip(self.curr_vel_cmd, self.params["v_min"], self.params["v_max"])
+        # integrated velocity command: integrate acceleration over time and clip to [v_min, v_max]
+        self.integrated_vel_cmd = self.integrated_vel_cmd + accl * self.time_step
+        self.integrated_vel_cmd = np.clip(self.integrated_vel_cmd, self.params["v_min"], self.params["v_max"])
 
         u_np = np.array([sv, accl])
 

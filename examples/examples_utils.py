@@ -26,7 +26,7 @@ def display_drift_obs(step, obs, reward, lookahead_n_points, total_reward=None):
     prev_steer_cmd = obs[7]
     prev_accl_cmd = obs[8]
     prev_avg_wheel_omega = obs[9]
-    curr_vel_cmd = obs[10]
+    integrated_vel_cmd = obs[10]
     curvatures = obs[11 : 11 + lookahead_n_points]
     widths = obs[11 + lookahead_n_points : 11 + (2 * lookahead_n_points)]
 
@@ -38,7 +38,7 @@ def display_drift_obs(step, obs, reward, lookahead_n_points, total_reward=None):
         f"  previous steering cmd={prev_steer_cmd:6.4f}\n"
         f"  previous accl cmd={prev_accl_cmd:6.4f}\n"
         f"  previous average wheel ang speed={prev_avg_wheel_omega:6.4f}\n"
-        f"  current velocity command (integrated from accl)={curr_vel_cmd:6.4f}\n"
+        f"  integrated velocity command={integrated_vel_cmd:6.4f}\n"
         f"  curvature lookahead:"
     )
     for i, value in enumerate(curvatures, start=1):

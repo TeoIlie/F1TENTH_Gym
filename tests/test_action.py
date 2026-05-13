@@ -356,6 +356,7 @@ def lagged_env():
             "num_agents": 1,
             "model": "std",
             "observation_config": {"type": "drift"},
+            "control_input": ["accl", "steering_angle"],
             "params": p,
             "normalize_act": True,
             "normalize_obs": True,
@@ -505,13 +506,16 @@ class TestConfigureUpdatesActOutput:
 
     @staticmethod
     def _make_env(control_input, normalize_act, params):
+        # 'drift' obs has integrated_vel_cmd (accl-only); fall back to 'drift_real' under speed.
+        long_mode = next((m for m in control_input if m in ("accl", "speed")), "accl")
+        obs_type = "drift" if long_mode == "accl" else "drift_real"
         return gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
                 "num_agents": 1,
                 "model": "std",
-                "observation_config": {"type": "drift"},
+                "observation_config": {"type": obs_type},
                 "control_input": control_input,
                 "params": params,
                 "normalize_act": normalize_act,

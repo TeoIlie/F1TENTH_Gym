@@ -377,9 +377,9 @@ class GKEnv(gym.Env):
         obs_type = self.observation_config["type"]
 
         # Validate drift observation requires STD model
-        if obs_type == "drift" and self.model != DynamicModel.STD:
+        if obs_type in ("drift", "drift_real") and self.model != DynamicModel.STD:
             raise ValueError(
-                "The 'drift' observation type requires the single_track_drift (STD) model. "
+                f"The '{obs_type}' observation type requires the single_track_drift (STD) model. "
                 f"Current model: {self.model}. "
                 "Please set model='std' (or model=DynamicModel.STD) when creating the environment."
             )
@@ -396,7 +396,7 @@ class GKEnv(gym.Env):
         normalize_obs = self.config["normalize_obs"]
 
         # Identify whether the chosen observation type is supported for normalization
-        supported_obs_types = ["drift", "race", "frenet", "drift_st"]
+        supported_obs_types = ["drift", "drift_real", "race", "frenet", "drift_st"]
         obs_norm_supported = obs_type in supported_obs_types
 
         if normalize_obs is None:
