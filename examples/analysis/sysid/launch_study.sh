@@ -85,8 +85,34 @@ done
 echo "PIDs: ${PIDS[*]}"
 echo "Tail logs with:  tail -f studies/${NAME}_w*.log"
 echo "Live progress available on wandb dashboard"
-echo "Waiting for workers..."
 
-wait
+# Launch optuna-dashboard against the journal file. It reads live while workers
+# write, and we tear it down on exit so it doesn't outlive the script.
+DASHBOARD_PID=""
+cleanup() {
+    if [[ -n "$DASHBOARD_PID" ]] && kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+        kill "$DASHBOARD_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+if command -v optuna-dashboard >/dev/null 2>&1; then
+    # Pre-create the journal so the dashboard never races the first worker write.
+    touch "studies/${NAME}.journal"
+    DASHBOARD_LOG="studies/${NAME}_dashboard.log"
+    DASHBOARD_PORT=8080
+    optuna-dashboard --port "$DASHBOARD_PORT" "studies/${NAME}.journal" \
+        > "$DASHBOARD_LOG" 2>&1 &
+    DASHBOARD_PID=$!
+    echo "optuna-dashboard PID: $DASHBOARD_PID  (log: $DASHBOARD_LOG)"
+    echo "Dashboard:         http://127.0.0.1:${DASHBOARD_PORT}"
+else
+    echo "optuna-dashboard not installed; skipping (pip install optuna-dashboard)"
+fi
+
+echo "Waiting for workers..."
+# `|| true` so one failing worker doesn't trip set -e and abort the others
+# mid-run (which would also kill the dashboard via the EXIT trap).
+wait "${PIDS[@]}" || true
 echo "All workers done."
 echo "Best params YAML: gymkhana/envs/params/f1tenth_std_optuna_${STAGE}.yaml"
