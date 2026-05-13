@@ -1116,6 +1116,39 @@ class TestPrevSteeringCmdNormalization:
 
         env.close()
 
+    def test_end_to_end_with_unnormalized_actions_steering_speed(self):
+        """steering_speed mode + unnormalized: bounds (sv_min, sv_max), endpoints map to ±1.
+
+        Closes the loop on the latent bug previously hidden by the bound calc using
+        (s_min, s_max) regardless of steering action type.
+        """
+        params = GKEnv.f1tenth_std_vehicle_params()
+        sv_min, sv_max = params["sv_min"], params["sv_max"]
+        env = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "std",
+                "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_speed"],
+                "params": params,
+                "normalize_act": False,
+                "normalize_obs": True,
+            },
+        )
+        try:
+            env.reset()
+            prev_steer_idx = 7
+            for raw, expected in ((sv_max, 1.0), (sv_min, -1.0)):
+                env.step(np.array([[raw, 2.0]], dtype=np.float32))
+                obs, _, _, _, _ = env.step(np.array([[raw, 2.0]], dtype=np.float32))
+                assert np.isclose(obs[prev_steer_idx], expected, atol=1e-5), (
+                    f"raw sv={raw}: expected normalized {expected}, got {obs[prev_steer_idx]}"
+                )
+        finally:
+            env.close()
+
 
 class TestPrevThrottleCmdNormalization:
     """End-to-end tests for prev_throttle_cmd in the normalized drift observation."""
