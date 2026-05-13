@@ -19,6 +19,8 @@ from examples.analysis.sysid.dataset import (
 )
 from examples.analysis.sysid.env import SYSID_PARAMS
 
+from .conftest import make_npz as _make_npz
+
 R_W = SYSID_PARAMS["R_w"]
 
 DT = 0.01
@@ -26,51 +28,6 @@ WINDOW_S = 1.5
 STRIDE_S = 0.5
 N_STEPS = int(round(WINDOW_S / DT))  # 150
 STRIDE = int(round(STRIDE_S / DT))  # 50
-
-
-def _make_npz(
-    path,
-    n: int = 500,
-    speed=1.0,
-    vy=0.0,
-    yaw_rate=0.0,
-    steer=0.1,
-    yaw=0.0,
-    rs_core_speed=None,
-    include_rs_core_speed: bool = True,
-):
-    """Write a synthetic 100Hz NPZ. Scalar args are broadcast to length-n arrays.
-
-    `rs_core_speed` defaults to `vx_arr` (no-slip), keeping legacy tests
-    semantically equivalent to the prior no-slip-derived omega seeding.
-    Set `include_rs_core_speed=False` to omit the field entirely.
-    """
-    t = np.arange(n) * DT
-    vx_arr = np.broadcast_to(np.asarray(speed, dtype=float), (n,)).copy()
-    vy_arr = np.broadcast_to(np.asarray(vy, dtype=float), (n,)).copy()
-    yaw_rate_arr = np.broadcast_to(np.asarray(yaw_rate, dtype=float), (n,)).copy()
-    steer_arr = np.broadcast_to(np.asarray(steer, dtype=float), (n,)).copy()
-    yaw_arr = np.broadcast_to(np.asarray(yaw, dtype=float), (n,)).copy()
-    x = np.cumsum(vx_arr) * DT
-    y = np.cumsum(vy_arr) * DT
-    fields = dict(
-        t=t,
-        cmd_speed=vx_arr.copy(),
-        cmd_steer=steer_arr,
-        vicon_x=x,
-        vicon_y=y,
-        vicon_yaw=yaw_arr,
-        vicon_body_vx=vx_arr,
-        vicon_body_vy=vy_arr,
-        vicon_r=yaw_rate_arr,
-    )
-    if include_rs_core_speed:
-        if rs_core_speed is None:
-            rs_arr = vx_arr.copy()
-        else:
-            rs_arr = np.broadcast_to(np.asarray(rs_core_speed, dtype=float), (n,)).copy()
-        fields["rs_core_speed"] = rs_arr
-    np.savez(path, **fields)
 
 
 @pytest.fixture

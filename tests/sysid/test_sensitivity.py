@@ -8,8 +8,6 @@ Three core invariants:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from examples.analysis.sysid.env import SYSID_PARAMS
@@ -20,8 +18,6 @@ from examples.analysis.sysid.sensitivity import (
     VEHICLE_DYN_CANDIDATES,
     run_sweep,
 )
-
-BAG_PATH = "examples/analysis/bags/circle_Apr6_100Hz.npz"
 
 
 def test_frozen_params_excluded_from_candidates():
@@ -43,14 +39,13 @@ def test_run_sweep_rejects_frozen_param_without_opt_in():
         )
 
 
-@pytest.mark.skipif(not os.path.exists(BAG_PATH), reason=f"requires test bag {BAG_PATH}")
-def test_delta_zero_reproduces_baseline():
+def test_delta_zero_reproduces_baseline(synthetic_bag_npz):
     """For every candidate, δ=0 yields the same loss as a clean dataset_loss
     call — catches accidental param mutation across iterations."""
     from examples.analysis.sysid.dataset import load_dataset
     from examples.analysis.sysid.rollout import Rollout
 
-    ds = load_dataset(BAG_PATH, mirror=False, window_length_s=1.0, stride_s=5.0)
+    ds = load_dataset(synthetic_bag_npz, mirror=False, window_length_s=1.0, stride_s=5.0)
     with Rollout() as r:
         r.set_params(SYSID_PARAMS)
         expected_total, _ = dataset_loss(r.run, ds)

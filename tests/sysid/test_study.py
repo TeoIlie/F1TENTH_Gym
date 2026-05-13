@@ -1,7 +1,7 @@
 """Tests for examples.analysis.sysid.study (Phase 3).
 
 Smoke tests:
-  1. 2-trial study runs end-to-end on circle bag; journal file persists.
+  1. 2-trial study runs end-to-end on a synthetic bag; journal file persists.
   2. Diverged trial maps to PRUNED state (not COMPLETE-with-inf).
   3. dump_best_params YAML round-trip preserves SYSID_PARAMS shape.
   4. Enqueue equivalence: midpoint trial matches direct dataset_loss call.
@@ -10,30 +10,21 @@ Smoke tests:
 from __future__ import annotations
 
 import math
-import os
 from unittest.mock import patch
 
 import optuna
 import pytest
 import yaml
 
-from examples.analysis.sysid.dataset import load_dataset
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.rollout import Rollout
 from examples.analysis.sysid.search_spaces import STAGE1, SYMMETRIC_PAIRS
 from examples.analysis.sysid.study import Objective, build_study, dump_best_params
 
-BAG_PATH = "examples/analysis/bags/circle_Apr6_100Hz.npz"
-
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(BAG_PATH),
-    reason=f"requires test bag {BAG_PATH}",
-)
-
 
 @pytest.fixture(scope="module")
-def dataset():
-    return load_dataset(BAG_PATH, mirror=False)
+def dataset(synthetic_dataset):
+    return synthetic_dataset
 
 
 @pytest.fixture(scope="module")
