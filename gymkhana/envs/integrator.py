@@ -40,7 +40,7 @@ class Integrator:
         return self._integrator_type
 
 
-@njit(cache=True)
+@njit(cache=False)
 def _rk4_step_jit(f, x, u, dt, params):
     k1 = f(x, u, params)
     k2 = f(x + dt * (k1 / 2), u, params)
@@ -57,7 +57,7 @@ def _rk4_step_py(f, x, u, dt, params):
     return x + dt * (1.0 / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@njit(cache=True)
+@njit(cache=False)
 def _euler_step_jit(f, x, u, dt, params):
     return x + dt * f(x, u, params)
 
