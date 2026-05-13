@@ -15,8 +15,8 @@ from commonroad.vehiclemodels.parameters_vehicle1 import parameters_vehicle1
 from commonroad.vehiclemodels.vehicle_dynamics_std import vehicle_dynamics_std as cr_vehicle_dynamics_std
 from scipy.integrate import odeint
 
+from gymkhana.envs.dynamic_models import vehicle_dynamics_std_py as vehicle_dynamics_std
 from gymkhana.envs.dynamic_models.single_track_drift import init_std
-from gymkhana.envs.dynamic_models.single_track_drift.single_track_drift import vehicle_dynamics_std
 from gymkhana.envs.gymkhana_env import GKEnv
 
 # ==================

@@ -167,6 +167,23 @@ def test_multi_agent_broadcast(env2):
     assert m0 == m1, f"agents diverge: {m0} vs {m1}"
 
 
+def test_named_tuple_rebuilt_on_update(env1):
+    """8. Hot-path NamedTuple stays in sync with the dict on every DR reset.
+
+    The jitted dynamics + integrator hot path reads ``agent._params_nt``
+    (a NamedTuple), not ``agent.params`` (the dict). If ``update_params``
+    ever forgets to rebuild ``_params_nt``, DR will silently keep using
+    baseline values in the dynamics while the dict shows perturbed values.
+    """
+    env1.dr_sigmas = {"m": 0.2, "lf": 0.1}
+    env1.dr_clip_k = 3.0
+    for s in (1, 7, 42):
+        env1.reset(seed=s)
+        agent = env1.sim.agents[0]
+        assert agent._params_nt.m == agent.params["m"], "_params_nt.m stale after reset"
+        assert agent._params_nt.lf == agent.params["lf"], "_params_nt.lf stale after reset"
+
+
 def test_clipping_bounds_respected(env1):
     """8. Clipping at ±K*sigma on the multiplier.
 

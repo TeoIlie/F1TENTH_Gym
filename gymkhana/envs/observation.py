@@ -753,7 +753,8 @@ class VectorObservation(Observation):
         n_lookahead = self.env.unwrapped.lookahead_n_points
         ds_lookahead = self.env.unwrapped.lookahead_ds
         lookahead_curvatures = np.zeros(n_lookahead, dtype=np.float32)
-        lookahead_widths = np.zeros(n_lookahead, dtype=np.float32)
+        n_widths = 2 if self.env.unwrapped.sparse_width_obs else n_lookahead
+        lookahead_widths = np.zeros(n_widths, dtype=np.float32)
 
         track = getattr(self.env.unwrapped, "track", None)
         if track is not None and getattr(track, "centerline", None) is not None:

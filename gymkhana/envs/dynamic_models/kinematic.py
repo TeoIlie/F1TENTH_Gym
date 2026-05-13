@@ -6,7 +6,8 @@ from numba import njit
 from .utils import accl_constraints, steering_constraint
 
 
-def vehicle_dynamics_ks(x: np.ndarray, u_init: np.ndarray, params: dict):
+@njit(cache=True)
+def vehicle_dynamics_ks(x: np.ndarray, u_init: np.ndarray, params) -> np.ndarray:
     """Compute Kinematic Single Track vehicle dynamics.
 
     Reference: CommonRoad vehicle models, section 5.
@@ -15,50 +16,24 @@ def vehicle_dynamics_ks(x: np.ndarray, u_init: np.ndarray, params: dict):
         x: State vector of shape ``(5,)``:
             ``[x_pos, y_pos, steering_angle, velocity, yaw_angle]``.
         u_init: Control input ``[steering_velocity, acceleration]``.
-        params: Vehicle parameters dict. Uses ``lf``, ``lr``, ``s_min``,
-            ``s_max``, ``sv_min``, ``sv_max``, ``v_switch``, ``a_max``,
-            ``v_min``, ``v_max``. See :mod:`gymkhana.envs.dynamic_models`
-            for full parameter descriptions.
+        params: :class:`gymkhana.envs.params.VehicleParams` NamedTuple.
 
     Returns:
         Time derivatives of the state vector, shape ``(5,)``.
     """
-    # Controls
-    X = x[0]
-    Y = x[1]
+    # States
     DELTA = x[2]
     V = x[3]
     PSI = x[4]
-    # Raw Actions
+    # Raw actions
     RAW_STEER_VEL = u_init[0]
     RAW_ACCL = u_init[1]
     # wheelbase
-    lwb = params["lf"] + params["lr"]
+    lwb = params.lf + params.lr
 
     # constraints
-    u = np.array(
-        [
-            steering_constraint(
-                DELTA,
-                RAW_STEER_VEL,
-                params["s_min"],
-                params["s_max"],
-                params["sv_min"],
-                params["sv_max"],
-            ),
-            accl_constraints(
-                V,
-                RAW_ACCL,
-                params["v_switch"],
-                params["a_max"],
-                params["v_min"],
-                params["v_max"],
-            ),
-        ]
-    )
-    # Corrected Actions
-    STEER_VEL = u[0]
-    ACCL = u[1]
+    STEER_VEL = steering_constraint(DELTA, RAW_STEER_VEL, params.s_min, params.s_max, params.sv_min, params.sv_max)
+    ACCL = accl_constraints(V, RAW_ACCL, params.v_switch, params.a_max, params.v_min, params.v_max)
 
     # system dynamics
     f = np.array(
@@ -73,72 +48,44 @@ def vehicle_dynamics_ks(x: np.ndarray, u_init: np.ndarray, params: dict):
     return f
 
 
-def vehicle_dynamics_ks_cog(x: np.ndarray, u_init: np.ndarray, params: dict):
+@njit(cache=True)
+def vehicle_dynamics_ks_cog(x: np.ndarray, u_init: np.ndarray, params) -> np.ndarray:
     """Compute Kinematic Single Track dynamics referenced at the centre of gravity.
 
     Unlike :func:`vehicle_dynamics_ks` (which references the rear axle), this
     variant computes position derivatives at the vehicle's centre of gravity by
-    incorporating the kinematic slip angle ``beta``. Used internally by the STD
-    model for the low-speed kinematic blending regime.
+    incorporating the kinematic slip angle ``beta``. Used by the STD and STP
+    models for the low-speed kinematic blending regime.
 
     Reference: CommonRoad vehicle models, section 5.
-
-    Args:
-        x: State vector of shape ``(5,)``:
-            ``[x_pos, y_pos, steering_angle, velocity, yaw_angle]``.
-        u_init: Control input ``[steering_velocity, acceleration]``.
-        params: Vehicle parameters dict. Uses ``lf``, ``lr``, ``s_min``,
-            ``s_max``, ``sv_min``, ``sv_max``, ``v_switch``, ``a_max``,
-            ``v_min``, ``v_max``. See :mod:`gymkhana.envs.dynamic_models`
-            for full parameter descriptions.
-
-    Returns:
-        Time derivatives of the state vector, shape ``(5,)``.
     """
-    # Controls
-    X = x[0]
-    Y = x[1]
+    # States
     DELTA = x[2]
     V = x[3]
     PSI = x[4]
-    # Raw Actions
+    # Raw actions
     RAW_STEER_VEL = u_init[0]
     RAW_ACCL = u_init[1]
     # wheelbase
-    lwb = params["lf"] + params["lr"]
+    lwb = params.lf + params.lr
+
     # constraints
-    u = np.array(
-        [
-            steering_constraint(
-                DELTA,
-                RAW_STEER_VEL,
-                params["s_min"],
-                params["s_max"],
-                params["sv_min"],
-                params["sv_max"],
-            ),
-            accl_constraints(
-                V,
-                RAW_ACCL,
-                params["v_switch"],
-                params["a_max"],
-                params["v_min"],
-                params["v_max"],
-            ),
-        ]
-    )
+    sv = steering_constraint(DELTA, RAW_STEER_VEL, params.s_min, params.s_max, params.sv_min, params.sv_max)
+    a = accl_constraints(V, RAW_ACCL, params.v_switch, params.a_max, params.v_min, params.v_max)
+
     # slip angle (beta) from vehicle kinematics
-    beta = np.arctan(np.tan(x[2]) * params["lr"] / lwb)
+    beta = np.arctan(np.tan(DELTA) * params.lr / lwb)
 
     # system dynamics
-    f = [
-        V * np.cos(beta + PSI),
-        V * np.sin(beta + PSI),
-        u[0],
-        u[1],
-        V * np.cos(beta) * np.tan(DELTA) / lwb,
-    ]
-
+    f = np.array(
+        [
+            V * np.cos(beta + PSI),
+            V * np.sin(beta + PSI),
+            sv,
+            a,
+            V * np.cos(beta) * np.tan(DELTA) / lwb,
+        ]
+    )
     return f
 
 

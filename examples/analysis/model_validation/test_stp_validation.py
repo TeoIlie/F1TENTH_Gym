@@ -18,7 +18,7 @@ Run from the gymkhana root with the project venv:
 
 import numpy as np
 
-from gymkhana.envs.dynamic_models.single_track_pacejka.single_track_pacejka import vehicle_dynamics_stp
+from gymkhana.envs.dynamic_models import vehicle_dynamics_stp_py as vehicle_dynamics_stp
 from gymkhana.envs.integrator import EulerIntegrator, RK4Integrator
 from gymkhana.envs.params import load_params
 

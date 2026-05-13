@@ -18,8 +18,8 @@ Deviations from the C++ original:
   v_min_blend=1.0``) and are gated on ``V`` rather than ``v_x``; the hard
   ``w_std=0`` clamp below ``v_min`` is replaced by a sharper tanh plus
   zeroing ``alpha`` and ``beta_dot`` below ``v_min_blend``. Thresholds are
-  overridable via params keys ``blend_v_s``, ``blend_v_b``, ``blend_v_min``
-  (used by parity tests against the f110 ref).
+  overridable via :class:`VehicleParams` fields ``blend_v_s``, ``blend_v_b``,
+  ``blend_v_min`` (used by parity tests against the f110 ref).
 
 State extraction: STP shares the ST 7-element state layout, so the dispatch in
 ``dynamic_models/__init__.py`` reuses ST's ``get_standardized_state_st`` for
@@ -27,22 +27,21 @@ STP rather than defining a separate function here.
 """
 
 import numpy as np
+from numba import njit
 
 from ..kinematic import vehicle_dynamics_ks_cog
 from ..utils import accl_constraints, steering_constraint
 
 
-def vehicle_dynamics_stp(x: np.ndarray, u_init: np.ndarray, params: dict) -> np.ndarray:
+@njit(cache=True)
+def vehicle_dynamics_stp(x: np.ndarray, u_init: np.ndarray, params) -> np.ndarray:
     """Compute Single Track Pacejka vehicle dynamics.
 
     Args:
         x: State vector of shape ``(7,)``:
             ``[x_pos, y_pos, steering_angle, velocity, yaw_angle, yaw_rate, slip_angle]``.
         u_init: Control input ``[steering_velocity, acceleration]``.
-        params: Vehicle parameters dict. Required keys:
-            ``mu, lf, lr, h_s, m, I_z,
-            B_f, C_f, D_f, E_f, B_r, C_r, D_r, E_r,
-            s_min, s_max, sv_min, sv_max, v_switch, a_max, v_min, v_max``.
+        params: :class:`gymkhana.envs.params.VehicleParams` NamedTuple.
 
     Returns:
         Time derivatives of the state vector, shape ``(7,)``.
@@ -57,44 +56,24 @@ def vehicle_dynamics_stp(x: np.ndarray, u_init: np.ndarray, params: dict) -> np.
     # Constants
     g = 9.81
 
-    # Kinematic↔dynamic blend thresholds. Match the original f110-simulator
-    # values (std_kinematics.cpp)
-    # Overridable via params for parity testing against the f110 reference.
-    v_s = params.get("blend_v_s", 3.0)  # blend center
-    v_b = params.get("blend_v_b", 1.0)  # blend width tanh scale
-    v_min_blend = params.get("blend_v_min", 1.0)  # hard kinematic floor
+    # Kinematic↔dynamic blend thresholds (set in the STP preset YAML; mirror
+    # the f110-simulator std_kinematics.cpp reference). Overridable by spreading
+    # the param dict in tests.
+    v_s = params.blend_v_s
+    v_b = params.blend_v_b
+    v_min_blend = params.blend_v_min
 
     # Apply input constraints (idempotent under RK4 sub-stages)
-    u = np.array(
-        [
-            steering_constraint(
-                DELTA,
-                u_init[0],
-                params["s_min"],
-                params["s_max"],
-                params["sv_min"],
-                params["sv_max"],
-            ),
-            accl_constraints(
-                V,
-                u_init[1],
-                params["v_switch"],
-                params["a_max"],
-                params["v_min"],
-                params["v_max"],
-            ),
-        ]
-    )
-    STEER_VEL = u[0]
-    ACCL = u[1]
+    STEER_VEL = steering_constraint(DELTA, u_init[0], params.s_min, params.s_max, params.sv_min, params.sv_max)
+    ACCL = accl_constraints(V, u_init[1], params.v_switch, params.a_max, params.v_min, params.v_max)
 
-    lf = params["lf"]
-    lr = params["lr"]
+    lf = params.lf
+    lr = params.lr
     lwb = lf + lr
-    m = params["m"]
-    I_z = params["I_z"]
-    h_s = params["h_s"]
-    mu = params["mu"]
+    m = params.m
+    I_z = params.I_z
+    h_s = params.h_s
+    mu = params.mu
 
     # --- Lateral tire slip angles (gymkhana sign convention) ---
     # Equivalent to f110's atan2(-v_y - lf*omega, v_x) + delta with v_y = V*sin(beta)
@@ -113,8 +92,14 @@ def vehicle_dynamics_stp(x: np.ndarray, u_init: np.ndarray, params: dict) -> np.
     # --- Pacejka Magic Formula lateral forces ---
     # Note: gymkhana sign convention has alpha = -alpha_f110, so we negate F_y to keep
     # the body-frame equations identical to the f110 implementation.
-    Bf, Cf, Df, Ef = params["B_f"], params["C_f"], params["D_f"], params["E_f"]
-    Br, Cr, Dr, Er = params["B_r"], params["C_r"], params["D_r"], params["E_r"]
+    Bf = params.B_f
+    Cf = params.C_f
+    Df = params.D_f
+    Ef = params.E_f
+    Br = params.B_r
+    Cr = params.C_r
+    Dr = params.D_r
+    Er = params.E_r
     F_yf = -mu * Df * F_zf * np.sin(Cf * np.arctan(Bf * alpha_f - Ef * (Bf * alpha_f - np.arctan(Bf * alpha_f))))
     F_yr = -mu * Dr * F_zr * np.sin(Cr * np.arctan(Br * alpha_r - Er * (Br * alpha_r - np.arctan(Br * alpha_r))))
 
@@ -137,8 +122,9 @@ def vehicle_dynamics_stp(x: np.ndarray, u_init: np.ndarray, params: dict) -> np.
         beta_dot = 0.0
 
     # --- Kinematic-bicycle derivatives for low-speed blend ---
-    x_ks = np.array([x[0], x[1], DELTA, V, PSI])
-    f_ks = vehicle_dynamics_ks_cog(x_ks, u, params)
+    u_constrained = np.array([STEER_VEL, ACCL])
+    x_ks = np.array([x[0], x[1], DELTA, V, PSI], dtype=np.float64)
+    f_ks = vehicle_dynamics_ks_cog(x_ks, u_constrained, params)
     V_dot_ks = f_ks[3]
     psi_dot_ks = f_ks[4]
     beta_dot_ks = (lr * STEER_VEL) / (lwb * cos_delta**2 * (1 + (np.tan(DELTA) ** 2 * lr / lwb) ** 2))

@@ -36,6 +36,7 @@ from .collision_models import collision_multiple, get_vertices
 from .dynamic_models import DynamicModel
 from .integrator import EulerIntegrator, Integrator
 from .laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
+from .params import to_named_tuple
 from .track import Track
 
 
@@ -96,6 +97,9 @@ class RaceCar(object):
 
         # initialization
         self.params = params
+        # numba-friendly view of params for the jitted dynamics + integrator;
+        # rebuilt in update_params. self.params (dict) stays for non-hot-path readers.
+        self._params_nt = to_named_tuple(params)
         self.seed = seed
         self.is_ego = is_ego
         self.time_step = time_step
@@ -203,6 +207,7 @@ class RaceCar(object):
             params: New vehicle parameters dictionary.
         """
         self.params = params
+        self._params_nt = to_named_tuple(params)
 
     def set_map(self, map: str | Track, map_scale: float = 1.0):
         """Set the map for the scan simulator.
@@ -371,8 +376,12 @@ class RaceCar(object):
         if not skip_integration:
             f_dynamics = self.model.f_dynamics
             prev_state = self.state.copy()
+            # MB dynamics is unjitted Python that reads params["..."]; everything else
+            # is @njit and reads attributes off the NamedTuple. The integrator
+            # dispatcher routes on isinstance(params, VehicleParams).
+            params_for_dyn = self.params if self.model == DynamicModel.MB else self._params_nt
             self.state = self.integrator.integrate(
-                f=f_dynamics, x=self.state, u=u_np, dt=self.time_step, params=self.params
+                f=f_dynamics, x=self.state, u=u_np, dt=self.time_step, params=params_for_dyn
             )
 
             # bound yaw angle
