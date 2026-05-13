@@ -1,20 +1,20 @@
-import numpy as np
+"""Implementation of the PAC2002 tire model."""
 
-"""
-Implementation of the PAC2002 tire model
-"""
+import numpy as np
+from numba import njit
 
 
 # longitudinal tire forces
-def formula_longitudinal(kappa, gamma, F_z, params: dict):
+@njit(cache=True)
+def formula_longitudinal(kappa, gamma, F_z, params):
     # longitudinal coefficients
-    tire_p_cx1 = params["tire_p_cx1"]  # Shape factor Cfx for longitudinal force
-    tire_p_dx1 = params["tire_p_dx1"]  # Longitudinal friction Mux at Fznom
-    tire_p_dx3 = params["tire_p_dx3"]  # Variation of friction Mux with camber
-    tire_p_ex1 = params["tire_p_ex1"]  # Longitudinal curvature Efx at Fznom
-    tire_p_kx1 = params["tire_p_kx1"]  # Longitudinal slip stiffness Kfx/Fz at Fznom
-    tire_p_hx1 = params["tire_p_hx1"]  # Horizontal shift Shx at Fznom
-    tire_p_vx1 = params["tire_p_vx1"]  # Vertical shift Svx/Fz at Fznom
+    tire_p_cx1 = params.tire_p_cx1  # Shape factor Cfx for longitudinal force
+    tire_p_dx1 = params.tire_p_dx1  # Longitudinal friction Mux at Fznom
+    tire_p_dx3 = params.tire_p_dx3  # Variation of friction Mux with camber
+    tire_p_ex1 = params.tire_p_ex1  # Longitudinal curvature Efx at Fznom
+    tire_p_kx1 = params.tire_p_kx1  # Longitudinal slip stiffness Kfx/Fz at Fznom
+    tire_p_hx1 = params.tire_p_hx1  # Horizontal shift Shx at Fznom
+    tire_p_vx1 = params.tire_p_vx1  # Vertical shift Svx/Fz at Fznom
 
     # turn slip is neglected, so xi_i=1
     # all scaling factors lambda = 1
@@ -39,17 +39,19 @@ def formula_longitudinal(kappa, gamma, F_z, params: dict):
 
 
 # lateral tire forces
-def formula_lateral(alpha, gamma, F_z, params: dict):
+@njit(cache=True)
+def formula_lateral(alpha, gamma, F_z, params):
+    """Pure-slip lateral tire force; returns ``(F_y, mu_y)`` tuple."""
     # lateral coefficients
-    tire_p_cy1 = params["tire_p_cy1"]  # Shape factor Cfy for lateral forces
-    tire_p_dy1 = params["tire_p_dy1"]  # Lateral friction Muy
-    tire_p_dy3 = params["tire_p_dy3"]  # Variation of friction Muy with squared camber
-    tire_p_ey1 = params["tire_p_ey1"]  # Lateral curvature Efy at Fznom
-    tire_p_ky1 = params["tire_p_ky1"]  # Maximum value of stiffness Kfy/Fznom
-    tire_p_hy1 = params["tire_p_hy1"]  # Horizontal shift Shy at Fznom
-    tire_p_hy3 = params["tire_p_hy3"]  # Variation of shift Shy with camber
-    tire_p_vy1 = params["tire_p_vy1"]  # Vertical shift in Svy/Fz at Fznom
-    tire_p_vy3 = params["tire_p_vy3"]  # Variation of shift Svy/Fz with camber
+    tire_p_cy1 = params.tire_p_cy1  # Shape factor Cfy for lateral forces
+    tire_p_dy1 = params.tire_p_dy1  # Lateral friction Muy
+    tire_p_dy3 = params.tire_p_dy3  # Variation of friction Muy with squared camber
+    tire_p_ey1 = params.tire_p_ey1  # Lateral curvature Efy at Fznom
+    tire_p_ky1 = params.tire_p_ky1  # Maximum value of stiffness Kfy/Fznom
+    tire_p_hy1 = params.tire_p_hy1  # Horizontal shift Shy at Fznom
+    tire_p_hy3 = params.tire_p_hy3  # Variation of shift Shy with camber
+    tire_p_vy1 = params.tire_p_vy1  # Vertical shift in Svy/Fz at Fznom
+    tire_p_vy3 = params.tire_p_vy3  # Variation of shift Svy/Fz with camber
 
     # turn slip is neglected, so xi_i=1
     # all scaling factors lambda = 1
@@ -71,21 +73,18 @@ def formula_lateral(alpha, gamma, F_z, params: dict):
 
     # magic tire formula
     F_y = D_y * np.sin(C_y * np.arctan(B_y * alpha_y - E_y * (B_y * alpha_y - np.arctan(B_y * alpha_y)))) + S_vy
-
-    res = []
-    res.append(F_y)
-    res.append(mu_y)
-    return res
+    return F_y, mu_y
 
 
 # longitudinal tire forces for combined slip
-def formula_longitudinal_comb(kappa, alpha, F0_x, params: dict):
+@njit(cache=True)
+def formula_longitudinal_comb(kappa, alpha, F0_x, params):
     # longitudinal coefficients
-    tire_r_bx1 = params["tire_r_bx1"]  # Slope factor for combined slip Fx reduction
-    tire_r_bx2 = params["tire_r_bx2"]  # Variation of slope Fx reduction with kappa
-    tire_r_cx1 = params["tire_r_cx1"]  # Shape factor for combined slip Fx reduction
-    tire_r_ex1 = params["tire_r_ex1"]  # Curvature factor of combined Fx
-    tire_r_hx1 = params["tire_r_hx1"]  # Shift factor for combined slip Fx reduction
+    tire_r_bx1 = params.tire_r_bx1  # Slope factor for combined slip Fx reduction
+    tire_r_bx2 = params.tire_r_bx2  # Variation of slope Fx reduction with kappa
+    tire_r_cx1 = params.tire_r_cx1  # Shape factor for combined slip Fx reduction
+    tire_r_ex1 = params.tire_r_ex1  # Curvature factor of combined Fx
+    tire_r_hx1 = params.tire_r_hx1  # Shift factor for combined slip Fx reduction
 
     # turn slip '' neglected, so xi_i=1
     # all scaling factors lambda = 1
@@ -111,19 +110,20 @@ def formula_longitudinal_comb(kappa, alpha, F0_x, params: dict):
 
 
 # lateral tire forces for combined slip
-def formula_lateral_comb(kappa, alpha, gamma, mu_y, F_z, F0_y, params: dict):
+@njit(cache=True)
+def formula_lateral_comb(kappa, alpha, gamma, mu_y, F_z, F0_y, params):
     # lateral coefficients
-    tire_r_by1 = params["tire_r_by1"]  # Slope factor for combined Fy reduction
-    tire_r_by2 = params["tire_r_by2"]  # Variation of slope Fy reduction with alpha
-    tire_r_by3 = params["tire_r_by3"]  # Shift term for alpha in slope Fy reduction
-    tire_r_cy1 = params["tire_r_cy1"]  # Shape factor for combined Fy reduction
-    tire_r_ey1 = params["tire_r_ey1"]  # Curvature factor of combined Fy
-    tire_r_hy1 = params["tire_r_hy1"]  # Shift factor for combined Fy reduction
-    tire_r_vy1 = params["tire_r_vy1"]  # Kappa induced side force Svyk/Muy*Fz at Fznom
-    tire_r_vy3 = params["tire_r_vy3"]  # Variation of Svyk/Muy*Fz with camber
-    tire_r_vy4 = params["tire_r_vy4"]  # Variation of Svyk/Muy*Fz with alpha
-    tire_r_vy5 = params["tire_r_vy5"]  # Variation of Svyk/Muy*Fz with kappa
-    tire_r_vy6 = params["tire_r_vy6"]  # Variation of Svyk/Muy*Fz with atan(kappa)
+    tire_r_by1 = params.tire_r_by1  # Slope factor for combined Fy reduction
+    tire_r_by2 = params.tire_r_by2  # Variation of slope Fy reduction with alpha
+    tire_r_by3 = params.tire_r_by3  # Shift term for alpha in slope Fy reduction
+    tire_r_cy1 = params.tire_r_cy1  # Shape factor for combined Fy reduction
+    tire_r_ey1 = params.tire_r_ey1  # Curvature factor of combined Fy
+    tire_r_hy1 = params.tire_r_hy1  # Shift factor for combined Fy reduction
+    tire_r_vy1 = params.tire_r_vy1  # Kappa induced side force Svyk/Muy*Fz at Fznom
+    tire_r_vy3 = params.tire_r_vy3  # Variation of Svyk/Muy*Fz with camber
+    tire_r_vy4 = params.tire_r_vy4  # Variation of Svyk/Muy*Fz with alpha
+    tire_r_vy5 = params.tire_r_vy5  # Variation of Svyk/Muy*Fz with kappa
+    tire_r_vy6 = params.tire_r_vy6  # Variation of Svyk/Muy*Fz with atan(kappa)
 
     # turn slip is neglected, so xi_i=1
     # all scaling factors lambda = 1

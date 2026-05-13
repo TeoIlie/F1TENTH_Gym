@@ -184,6 +184,8 @@ class GKEnv(gym.Env):
         self.num_agents = self.config["num_agents"]
         self.timestep = self.config["timestep"]
         self.ego_idx = self.config["ego_idx"]
+        # Per-step Frenet cache, (num_agents, 3): [s, ey, ephi]. Populated each step in _update_frenet_cache.
+        self._frenet_cache = np.zeros((self.num_agents, 3), dtype=np.float64)
         self.integrator = IntegratorType.from_string(self.config["integrator"])
         self.model = DynamicModel.from_string(self.config["model"])
         self.observation_config = self.config["observation_config"]
@@ -727,7 +729,7 @@ class GKEnv(gym.Env):
             terminated = self.boundary_exceeded[0] or self.recovery_succeeded
 
             # Truncated: arc-length exceeded OR timestep limit
-            current_s, _ = self.track.centerline.spline.calc_arclength_inaccurate(self.poses_x[0], self.poses_y[0])
+            current_s = self._frenet_cache[0, 0]
             truncated = current_s > self.recovery_s_max or self.current_step > self.max_episode_steps
             return bool(terminated), bool(truncated), False
 
@@ -771,6 +773,22 @@ class GKEnv(gym.Env):
             truncated = self.current_step > self.max_episode_steps
 
             return bool(terminated), bool(truncated), self.toggle_list >= 4
+
+    def _update_frenet_cache(self):
+        """Project every agent's pose onto the centerline once per step.
+
+        ``debug=True`` fires only for the ego row to match the prior per-step
+        debug-print cadence (previously emitted from ``observe`` only).
+        """
+        poses = self.sim.agent_poses
+        for i in range(self.num_agents):
+            debug = self.debug_frenet_projection and i == self.ego_idx
+            s, ey, ephi = self.track.cartesian_to_frenet(
+                poses[i, 0], poses[i, 1], poses[i, 2], use_raceline=False, debug=debug
+            )
+            self._frenet_cache[i, 0] = s
+            self._frenet_cache[i, 1] = ey
+            self._frenet_cache[i, 2] = ephi
 
     def _update_state(self):
         """Update env state from the simulator after a step.
@@ -841,22 +859,10 @@ class GKEnv(gym.Env):
             True if the agent has exceeded track boundaries.
 
         Raises:
-            RuntimeError: If Frenet coordinate conversion fails.
             ValueError: If track boundary data (``w_lefts``, ``w_rights``, ``ss``) is missing.
         """
-        # Get agent position
-        x = self.poses_x[agent_idx]
-        y = self.poses_y[agent_idx]
-        theta = self.poses_theta[agent_idx]
-
-        # Convert to Frenet coordinates
-        try:
-            s, ey, _ = self.track.cartesian_to_frenet(x, y, theta, use_raceline=False)
-        except Exception as e:
-            raise RuntimeError(
-                f"Frenet coordinate conversion failed for agent {agent_idx} at position ({x:.2f}, {y:.2f}). "
-                f"This is required for boundary checking with predictive_collision=False. Error: {e}"
-            ) from e
+        s = self._frenet_cache[agent_idx, 0]
+        ey = self._frenet_cache[agent_idx, 1]
 
         centerline = self.track.centerline
 
@@ -912,9 +918,7 @@ class GKEnv(gym.Env):
         d_beta = (beta - self.prev_beta) / self.timestep
         d_r = (r - self.prev_r) / self.timestep
 
-        # Calculate heading error
-        x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
-        _, _, frenet_u = self.track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+        frenet_u = self._frenet_cache[0, 2]
 
         # Check recovery condition
         return (
@@ -976,7 +980,7 @@ class GKEnv(gym.Env):
 
             for i in range(self.num_agents):
                 # current_s calculated as distance along track centerline from start, in meters
-                current_s, _ = self.track.centerline.spline.calc_arclength_inaccurate(self.poses_x[i], self.poses_y[i])
+                current_s = self._frenet_cache[i, 0]
 
                 # progress is current - previous arc length
                 prog = current_s - self.last_s[i]
@@ -1027,6 +1031,8 @@ class GKEnv(gym.Env):
 
         # call simulation step
         self.sim.step(action, skip_integration=skip_integration)
+
+        self._update_frenet_cache()
 
         # detect numerical instability flagged by RaceCar.update_pose
         # (no-op when prevent_instability=False — agents never set .unstable)

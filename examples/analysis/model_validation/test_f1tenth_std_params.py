@@ -12,8 +12,8 @@ import yaml
 from matplotlib.gridspec import GridSpec
 from scipy.integrate import odeint
 
+from gymkhana.envs.dynamic_models import vehicle_dynamics_std_py as vehicle_dynamics_std
 from gymkhana.envs.dynamic_models.single_track_drift import init_std
-from gymkhana.envs.dynamic_models.single_track_drift.single_track_drift import vehicle_dynamics_std
 from gymkhana.envs.gymkhana_env import GKEnv
 
 # ==================

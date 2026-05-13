@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.integrate import odeint
 
-from gymkhana.envs.dynamic_models.single_track import vehicle_dynamics_st
-from gymkhana.envs.dynamic_models.single_track_pacejka.single_track_pacejka import vehicle_dynamics_stp
+from gymkhana.envs.dynamic_models import vehicle_dynamics_st_py as vehicle_dynamics_st
+from gymkhana.envs.dynamic_models import vehicle_dynamics_stp_py as vehicle_dynamics_stp
 from gymkhana.envs.gymkhana_env import GKEnv
 
 # ST and STP take incompatible parameter dicts (linear stiffness vs Pacejka coeffs),

@@ -238,16 +238,10 @@ class TestRecoveryReward(unittest.TestCase):
 
         # Case 3: arc-length exceeded -> truncated
         with patch.object(self.uw, "_check_recovery_success", return_value=False):
-            # Mock position far past recovery_s_max
-            self.uw.poses_x = [0.0]
-            self.uw.poses_y = [0.0]
-            original_calc = self.uw.track.centerline.spline.calc_arclength_inaccurate
-            self.uw.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (
-                self.uw.recovery_s_max + 10,
-                0,
-            )
+            original_cache_s = self.uw._frenet_cache[0, 0]
+            self.uw._frenet_cache[0, 0] = self.uw.recovery_s_max + 10
             terminated, truncated, _ = self.uw._check_done()
-            self.uw.track.centerline.spline.calc_arclength_inaccurate = original_calc
+            self.uw._frenet_cache[0, 0] = original_cache_s
         self.assertFalse(terminated, "Arc-length exceed should not terminate")
         self.assertTrue(truncated, "Arc-length exceed should truncate")
 

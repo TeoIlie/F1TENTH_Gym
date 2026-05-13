@@ -747,36 +747,26 @@ class VectorObservation(Observation):
         curr_avg_wheel_omega = agent.curr_avg_wheel_omega
         prev_avg_wheel_omega = agent.prev_avg_wheel_omega
 
-        # Compute Frenet coordinates if track is available
-        frenet_u = 0.0  # heading error (0.0 default when unavailable)
-        frenet_n = 0.0  # lateral distance (0.0 default when unavailable)
-
-        # Get config values for lookahead points
+        # Defaults used when track is unavailable; otherwise overwritten below.
+        frenet_u = 0.0
+        frenet_n = 0.0
         n_lookahead = self.env.unwrapped.lookahead_n_points
         ds_lookahead = self.env.unwrapped.lookahead_ds
+        lookahead_curvatures = np.zeros(n_lookahead, dtype=np.float32)
+        n_widths = 2 if self.env.unwrapped.sparse_width_obs else n_lookahead
+        lookahead_widths = np.zeros(n_widths, dtype=np.float32)
 
-        # Get curvatures and widths for lookahead points
-        lookahead_curvatures = np.zeros(
-            n_lookahead, dtype=np.float32
-        )  # Lookahead curvatures (zeros default when unavailable)
-        lookahead_widths = np.zeros(n_lookahead, dtype=np.float32)  # Lookahead widths (zeros default when unavailable)
-
-        # Check if track and centerline are available
         track = getattr(self.env.unwrapped, "track", None)
         if track is not None and getattr(track, "centerline", None) is not None:
             try:
-                # Convert Cartesion coordinates to Frenet
-                s, ey, ephi = track.cartesian_to_frenet(
-                    x, y, theta, use_raceline=False, debug=self.env.unwrapped.debug_frenet_projection
-                )
+                # Read from GKEnv._frenet_cache populated each step. Index [0] is single-agent (asserted in space()).
+                cache = self.env.unwrapped._frenet_cache
+                s, ey, ephi = float(cache[0, 0]), float(cache[0, 1]), float(cache[0, 2])
 
-                frenet_u = float(ephi)  # heading error (vehicle heading - track heading)
-                frenet_n = float(ey)  # lateral distance from centerline (left=-ve, right=+ve)
+                frenet_u = ephi  # heading error (vehicle heading - track heading)
+                frenet_n = ey  # lateral distance from centerline (left=-ve, right=+ve)
 
-                # Sample lookahead curvatures using configured parameters n, ds
                 lookahead_curvatures = sample_lookahead_curvatures_fast(track, s, n_points=n_lookahead, ds=ds_lookahead)
-
-                # Sample lookahead widths using configured parameters n, ds
                 lookahead_widths = sample_lookahead_widths_fast(track, s, n_points=n_lookahead, ds=ds_lookahead)
 
                 if self.env.unwrapped.sparse_width_obs:
@@ -784,8 +774,8 @@ class VectorObservation(Observation):
                     lookahead_widths = np.array([lookahead_widths[0], lookahead_widths[-1]], dtype=np.float32)
 
             except Exception as e:
+                # Fall back to zero defaults set above; print so the failure is visible.
                 print(f"Frenet conversion failed: {e}")
-                # Keep NaN values to indicate computation failure
 
         # create agent's observation dict, with all possible observation values for current time step
         agent_obs = {

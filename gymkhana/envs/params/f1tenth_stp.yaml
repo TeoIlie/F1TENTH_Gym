@@ -48,3 +48,12 @@ v_switch: 7.319
 a_max: 6.0
 v_min: -5.0
 v_max: 20.0
+
+# =========================
+# Blend thresholds
+# =========================
+# Values mirror the f110-simulator reference (std_kinematics.cpp)
+# optionally change to blend_v_s = 0.2, blend_v_b = 0.05, blend_v_min = 0.1 - better performance, but more integration instability
+blend_v_s: 3.0
+blend_v_b: 1.0
+blend_v_min: 1.0

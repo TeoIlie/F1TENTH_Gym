@@ -519,3 +519,40 @@ class TestMultiMapTraining(unittest.TestCase):
             f"\n✅ Multi-map integration test passed: {n_envs} envs on {len(track_pool)} tracks, "
             f"identical observation/action spaces, successful reset"
         )
+
+
+class TestMultiBodySmoke(unittest.TestCase):
+    """End-to-end smoke for the Multi-Body model.
+
+    MB is the only model that exercises the integrator's pure-Python fallback
+    (it consumes the parameter dict directly and is itself unjitted), and its
+    tire-formula calls go through a locally-built ``VehicleParams`` inside
+    ``vehicle_dynamics_mb``. This test catches any future change that breaks
+    that path — there are no other MB unit tests in the suite.
+    """
+
+    def test_constructs_and_steps(self):
+        from gymkhana.envs.gymkhana_env import GKEnv
+
+        env = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "model": "mb",
+                "params": GKEnv.fullscale_vehicle_params(),
+                "num_agents": 1,
+                "observation_config": {"type": None},
+                "reset_config": {"type": "rl_random_static"},
+                "integrator": "rk4",
+                "timestep": 0.01,
+            },
+        )
+        env.reset(seed=0)
+        action = np.array([[0.0, 1.0]], dtype=np.float32)
+        for _ in range(5):
+            _, _, term, trunc, _ = env.step(action)
+            if term or trunc:
+                env.reset(seed=0)
+        # State must remain finite — Python integrator fallback works.
+        state = env.unwrapped.sim.agents[0].state
+        self.assertTrue(np.all(np.isfinite(state)), f"MB state went non-finite: {state}")
+        env.close()

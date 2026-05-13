@@ -13,11 +13,11 @@ import numpy as np
 from matplotlib.pyplot import legend, title
 from scipy.integrate import odeint
 
+from gymkhana.envs.dynamic_models import vehicle_dynamics_st_py as vehicle_dynamics_st
+from gymkhana.envs.dynamic_models import vehicle_dynamics_std_py as vehicle_dynamics_std
 from gymkhana.envs.dynamic_models.multi_body import init_mb
 from gymkhana.envs.dynamic_models.multi_body.multi_body import vehicle_dynamics_mb
-from gymkhana.envs.dynamic_models.single_track import vehicle_dynamics_st
 from gymkhana.envs.dynamic_models.single_track_drift import init_std
-from gymkhana.envs.dynamic_models.single_track_drift.single_track_drift import vehicle_dynamics_std
 from gymkhana.envs.gymkhana_env import GKEnv
 
 

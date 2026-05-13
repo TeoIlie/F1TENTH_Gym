@@ -60,12 +60,47 @@ from typing import Optional
 
 import numpy as np
 
-from .kinematic import get_standardized_state_ks, vehicle_dynamics_ks
+from ..params import to_named_tuple
+from .kinematic import get_standardized_state_ks, vehicle_dynamics_ks, vehicle_dynamics_ks_cog
 from .multi_body import get_standardized_state_mb, init_mb, vehicle_dynamics_mb
 from .single_track import get_standardized_state_st, vehicle_dynamics_st
 from .single_track_drift import get_standardized_state_std, init_std, vehicle_dynamics_std
 from .single_track_pacejka import vehicle_dynamics_stp
 from .utils import bang_bang_steer, p_accl
+
+# Python-dict wrappers around the jitted dynamics. Used by scipy.odeint test
+# code and any caller with a plain dict. Also coerce x/u to float64 ndarrays so
+# heterogeneous Python lists (e.g. u=[0.15, 0]) don't trip numba's nopython
+# type checker. Production env path uses the jitted core directly.
+
+
+def _as_f64(a):
+    return np.ascontiguousarray(a, dtype=np.float64)
+
+
+def vehicle_dynamics_ks_py(x, u_init, params):
+    """Plain-dict wrapper around :func:`vehicle_dynamics_ks` (KS model)."""
+    return vehicle_dynamics_ks(_as_f64(x), _as_f64(u_init), to_named_tuple(params))
+
+
+def vehicle_dynamics_ks_cog_py(x, u_init, params):
+    """Plain-dict wrapper around :func:`vehicle_dynamics_ks_cog`."""
+    return vehicle_dynamics_ks_cog(_as_f64(x), _as_f64(u_init), to_named_tuple(params))
+
+
+def vehicle_dynamics_st_py(x, u_init, params):
+    """Plain-dict wrapper around :func:`vehicle_dynamics_st` (ST model)."""
+    return vehicle_dynamics_st(_as_f64(x), _as_f64(u_init), to_named_tuple(params))
+
+
+def vehicle_dynamics_std_py(x, u_init, params):
+    """Plain-dict wrapper around :func:`vehicle_dynamics_std` (STD model)."""
+    return vehicle_dynamics_std(_as_f64(x), _as_f64(u_init), to_named_tuple(params))
+
+
+def vehicle_dynamics_stp_py(x, u_init, params):
+    """Plain-dict wrapper around :func:`vehicle_dynamics_stp` (STP model)."""
+    return vehicle_dynamics_stp(_as_f64(x), _as_f64(u_init), to_named_tuple(params))
 
 
 class DynamicModel(Enum):
