@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import patch
 
 import gymnasium as gym
 import numpy as np
@@ -48,12 +47,10 @@ class TestFrenetModeReset(unittest.TestCase):
         unwrapped.poses_y = np.array([0.0])
         unwrapped.poses_theta = np.array([0.0])
 
-        # Mock: ego agent exceeds boundary (ey=2.5m > half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 2.5, 0.0)):
-            # Update state to populate boundary_exceeded array
-            unwrapped._update_state()
-            # Check if done
-            done, _, _ = unwrapped._check_done()
+        # Exceeds boundary (ey=2.5m > half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 2.5, 0.0]
+        unwrapped._update_state()
+        done, _, _ = unwrapped._check_done()
 
         self.assertTrue(done, "Environment should reset when ego agent exceeds track boundary in Frenet mode")
 
@@ -74,12 +71,10 @@ class TestFrenetModeReset(unittest.TestCase):
         # Initialize toggle_list to simulate no lap completion
         unwrapped.toggle_list = np.array([0])
 
-        # Mock: ego agent within boundaries (ey=0.5m < half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 0.5, 0.0)):
-            # Update state to populate boundary_exceeded array
-            unwrapped._update_state()
-            # Check if done
-            done, _, _ = unwrapped._check_done()
+        # Within boundaries (ey=0.5m < half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 0.5, 0.0]
+        unwrapped._update_state()
+        done, _, _ = unwrapped._check_done()
 
         self.assertFalse(done, "Environment should NOT reset when ego agent is within track boundaries in Frenet mode")
 
@@ -221,10 +216,10 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
         unwrapped.poses_y = np.array([0.0])
         unwrapped.poses_theta = np.array([0.0])
 
-        # Mock: ego agent exceeds boundary (ey=2.5m > half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 2.5, 0.0)):
-            unwrapped._update_state()
-            terminated, truncated, _ = unwrapped._check_done()
+        # Exceeds boundary (ey=2.5m > half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 2.5, 0.0]
+        unwrapped._update_state()
+        terminated, truncated, _ = unwrapped._check_done()
 
         self.assertTrue(terminated, "terminated should be True when ego agent exceeds track boundary in Frenet mode")
         self.assertFalse(truncated, "truncated should be False when boundary violation occurs before time limit")
@@ -246,10 +241,10 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
         # Initialize toggle_list to simulate no lap completion
         unwrapped.toggle_list = np.array([0])
 
-        # Mock: ego agent within boundaries (ey=0.5m < half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 0.5, 0.0)):
-            unwrapped._update_state()
-            terminated, truncated, _ = unwrapped._check_done()
+        # Within boundaries (ey=0.5m < half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 0.5, 0.0]
+        unwrapped._update_state()
+        terminated, truncated, _ = unwrapped._check_done()
 
         self.assertFalse(
             terminated, "terminated should be False when ego agent is within track boundaries in Frenet mode"

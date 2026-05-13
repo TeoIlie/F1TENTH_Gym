@@ -42,14 +42,10 @@ class TestGetRewardWraparound:
         env.poses_y = [env.track.centerline.ys[0]]
         env.collisions = np.zeros(1)
 
-        # Mock calc_arclength to return position 55m (5m forward)
-        original_calc = env.track.centerline.spline.calc_arclength_inaccurate
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (50.1, 0)
+        # 0.1m forward progress from last_s=50
+        env._frenet_cache[0, 0] = 50.1
 
         reward = env._get_reward()
-
-        # Restore original method
-        env.track.centerline.spline.calc_arclength_inaccurate = original_calc
 
         print("\nNormal forward progress test:")
         print(f"  Track length: {track_length:.2f}m")
@@ -85,8 +81,8 @@ class TestGetRewardWraparound:
         env.poses_y = [env.track.centerline.ys[0]]
         env.collisions = np.zeros(1)
 
-        # Mock calc_arclength to return position 5m after start (crossed finish)
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (5.0, 0)
+        # 5m after start (crossed finish)
+        env._frenet_cache[0, 0] = 5.0
 
         reward = env._get_reward()
 
@@ -135,8 +131,8 @@ class TestGetRewardWraparound:
         env.last_s = [last_s]
         env.collisions = np.zeros(1)
 
-        # Mock position 10m from start
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (10.0, 0)
+        # 10m from start (after wraparound)
+        env._frenet_cache[0, 0] = 10.0
 
         reward = env._get_reward()
 
@@ -171,7 +167,7 @@ class TestGetRewardWraparound:
         env.collisions = np.zeros(1)
 
         # Move forward 5m, still before finish
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (track_length - 9.9, 0)
+        env._frenet_cache[0, 0] = track_length - 9.9
 
         reward = env._get_reward()
 
@@ -190,8 +186,8 @@ class TestGetRewardWraparound:
         env.last_s = [last_s]
         env.collisions = np.array([1])  # Collision detected
 
-        # Mock 5m forward progress
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (50.1, 0)
+        # 0.1m forward progress
+        env._frenet_cache[0, 0] = 50.1
 
         reward = env._get_reward()
 
@@ -227,16 +223,9 @@ class TestGetRewardWraparound:
         env.last_s = [last_s_agent0, last_s_agent1]
         env.collisions = np.zeros(2)
 
-        # Mock both agents moving forward
-        def mock_calc(x, y):
-            # Simple alternating return for two agents
-            if not hasattr(mock_calc, "call_count"):
-                mock_calc.call_count = 0
-            result = (50.1, 0) if mock_calc.call_count == 0 else (100.1, 0)
-            mock_calc.call_count += 1
-            return result
-
-        env.track.centerline.spline.calc_arclength_inaccurate = mock_calc
+        # Both agents moved forward 0.1m
+        env._frenet_cache[0, 0] = 50.1
+        env._frenet_cache[1, 0] = 100.1
 
         reward = env._get_reward()
 
@@ -452,7 +441,7 @@ class TestGetRewardEdgeCases:
         env.collisions = np.zeros(1)
 
         # No movement
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (50.0, 0)
+        env._frenet_cache[0, 0] = 50.0
 
         reward = env._get_reward()
 
@@ -470,8 +459,8 @@ class TestGetRewardEdgeCases:
         env.last_s = [last_s]
         env.collisions = np.zeros(1)
 
-        # Moved backward 5m
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (99.9, 0)
+        # Moved backward 0.1m
+        env._frenet_cache[0, 0] = 99.9
 
         reward = env._get_reward()
 
@@ -517,8 +506,8 @@ class TestRewardCalculation:
         env.poses_x = [env.track.centerline.xs[0]]
         env.poses_y = [env.track.centerline.ys[0]]
 
-        # Mock position at same location (zero progress)
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (50.0, 0)
+        # Same location (zero progress)
+        env._frenet_cache[0, 0] = 50.0
 
         # Set agent velocity (state[3] = v_x for ST model)
         env.sim.agents[0].state[3] = 5.0
@@ -548,8 +537,8 @@ class TestRewardCalculation:
             env.poses_x = [env.track.centerline.xs[0]]
             env.poses_y = [env.track.centerline.ys[0]]
 
-            # Mock position 1.0m ahead
-            env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (51.0, 0)
+            # 1.0m ahead
+            env._frenet_cache[0, 0] = 51.0
 
             # Set agent velocity (state[3] = v_x for ST model)
             env.sim.agents[0].state[3] = 5.0
@@ -579,8 +568,8 @@ class TestRewardCalculation:
         env.poses_x = [env.track.centerline.xs[0]]
         env.poses_y = [env.track.centerline.ys[0]]
 
-        # Mock position 0.1m ahead (small forward progress)
-        env.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (50.1, 0)
+        # 0.1m ahead (small forward progress)
+        env._frenet_cache[0, 0] = 50.1
 
         # Set agent with NEGATIVE velocity (state[3] = v_x for ST model)
         env.sim.agents[0].state[3] = -2.0
