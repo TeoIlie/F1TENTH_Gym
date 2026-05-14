@@ -49,6 +49,7 @@ TRACK_POOL = _config["track_pool"]
 TRACK_DIRECTION = _config["track_direction"]
 NUM_BEAMS = _config["num_beams"]  # training-only: minimal LiDAR beams to save compute
 SPARSE_WIDTH_OBS = _config["sparse_width_obs"]
+OBSERVATION_TYPE = _config["observation_type"]
 RECORD_OBS_MIN_MAX = _config["record_obs_min_max"]
 PREVENT_INSTABILITY = _config["prevent_instability"]
 
@@ -96,6 +97,7 @@ def _base_config(debug_render):
         params=PARAMS,
         num_beams=NUM_BEAMS,
         # training-workflow-specific keys not in drift_config
+        observation_config={"type": OBSERVATION_TYPE},
         render_lookahead_curvatures=debug_render,
         debug_frenet_projection=debug_render,
         render_track_lines=debug_render,

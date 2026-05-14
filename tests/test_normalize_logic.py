@@ -39,6 +39,7 @@ class TestNormalizationBounds:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_act": True,
                 "normalize_obs": True,
@@ -57,6 +58,7 @@ class TestNormalizationBounds:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_act": False,
                 "normalize_obs": True,
@@ -76,9 +78,9 @@ class TestNormalizationBounds:
             "delta",
             "beta",
             "prev_steering_cmd",
-            "prev_accl_cmd",
+            "prev_throttle_cmd",
             "prev_avg_wheel_omega",
-            "curr_vel_cmd",
+            "integrated_vel_cmd",
             "lookahead_curvatures",
             "lookahead_widths",
         ]
@@ -113,6 +115,72 @@ class TestNormalizationBounds:
             s_min,
             s_max,
         ), f"Expected ({s_min}, {s_max}), got {bounds['prev_steering_cmd']}"
+
+    # Matrix coverage for {prev,curr}_{steering,throttle}_cmd bounds across action types.
+
+    @staticmethod
+    def _make_env(control_input, normalize_act):
+        # "frenet" obs has no integrated_vel_cmd guard, so the env builds in any control mode.
+        return gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "std",
+                "observation_config": {"type": "frenet"},
+                "control_input": control_input,
+                "params": GKEnv.f1tenth_std_vehicle_params(),
+                "normalize_act": normalize_act,
+                "normalize_obs": True,
+            },
+        )
+
+    @pytest.mark.parametrize("feat", ["prev_throttle_cmd", "curr_throttle_cmd"])
+    @pytest.mark.parametrize(
+        "long_type,normalize_act,expected_fn",
+        [
+            ("accl", True, lambda p: (-1.0, 1.0)),
+            ("accl", False, lambda p: (-p["a_max"], p["a_max"])),
+            ("speed", True, lambda p: (-1.0, 1.0)),
+            ("speed", False, lambda p: (p["v_min"], p["v_max"])),
+        ],
+    )
+    def test_throttle_cmd_bounds_matrix(self, feat, long_type, normalize_act, expected_fn):
+        """Throttle cmd bounds across (normalize_act × long action type)."""
+        env = self._make_env([long_type, "steering_angle"], normalize_act)
+        try:
+            bounds = calculate_norm_bounds(env.unwrapped, [feat])
+            params = GKEnv.f1tenth_std_vehicle_params()
+            expected = expected_fn(params)
+            assert bounds[feat] == expected, (
+                f"{feat} long={long_type} norm={normalize_act}: expected {expected}, got {bounds[feat]}"
+            )
+        finally:
+            env.close()
+
+    @pytest.mark.parametrize("feat", ["prev_steering_cmd", "curr_steering_cmd"])
+    @pytest.mark.parametrize(
+        "steer_type,normalize_act,expected_fn",
+        [
+            ("steering_angle", True, lambda p: (-1.0, 1.0)),
+            ("steering_angle", False, lambda p: (p["s_min"], p["s_max"])),
+            ("steering_speed", True, lambda p: (-1.0, 1.0)),
+            ("steering_speed", False, lambda p: (p["sv_min"], p["sv_max"])),
+        ],
+    )
+    def test_steering_cmd_bounds_matrix(self, feat, steer_type, normalize_act, expected_fn):
+        """Steering cmd bounds across (normalize_act × steer action type); covers the
+        previously-untested steering_speed unnormalized case (latent bug fix)."""
+        env = self._make_env(["accl", steer_type], normalize_act)
+        try:
+            bounds = calculate_norm_bounds(env.unwrapped, [feat])
+            params = GKEnv.f1tenth_std_vehicle_params()
+            expected = expected_fn(params)
+            assert bounds[feat] == expected, (
+                f"{feat} steer={steer_type} norm={normalize_act}: expected {expected}, got {bounds[feat]}"
+            )
+        finally:
+            env.close()
 
     def test_beta_normalization_bounds(self, normalized_env):
         """Verify beta (slip angle) normalization with conservative ±π/3 bounds."""
@@ -350,6 +418,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -390,6 +459,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": False,
             },
@@ -430,6 +500,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -442,6 +513,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -454,6 +526,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -545,6 +618,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -557,6 +631,7 @@ class TestNormalizedObservation:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": False,
             },
@@ -943,6 +1018,7 @@ class TestPrevSteeringCmdNormalization:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_act": True,
                 "normalize_obs": True,
@@ -951,10 +1027,9 @@ class TestPrevSteeringCmdNormalization:
 
         obs, _ = env.reset()
 
-        # Get the index of prev_steering_cmd in observation
-        # For drift obs: [vx, vy, u, n, omega_z, delta, beta, prev_steer, prev_accl,
-        #                 prev_wheel_omega, curr_vel_cmd, lookahead_curv..., lookahead_width...]
-        prev_steer_idx = 7  # Based on drift observation structure (beta was added at index 6)
+        # Drift obs layout: [vx, vy, u, n, omega_z, delta, beta, prev_steer, prev_throttle,
+        #                    prev_wheel_omega, integrated_vel_cmd, lookahead_curv..., lookahead_width...]
+        prev_steer_idx = 7
 
         # Test with maximum left steering (-1)
         # Note: prev_steering_cmd holds the PREVIOUS step's steering, so we need to step twice
@@ -998,6 +1073,7 @@ class TestPrevSteeringCmdNormalization:
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": params,
                 "normalize_act": False,
                 "normalize_obs": True,
@@ -1039,6 +1115,130 @@ class TestPrevSteeringCmdNormalization:
         )
 
         env.close()
+
+    def test_end_to_end_with_unnormalized_actions_steering_speed(self):
+        """steering_speed mode + unnormalized: bounds (sv_min, sv_max), endpoints map to ±1.
+
+        Closes the loop on the latent bug previously hidden by the bound calc using
+        (s_min, s_max) regardless of steering action type.
+        """
+        params = GKEnv.f1tenth_std_vehicle_params()
+        sv_min, sv_max = params["sv_min"], params["sv_max"]
+        env = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "std",
+                "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_speed"],
+                "params": params,
+                "normalize_act": False,
+                "normalize_obs": True,
+            },
+        )
+        try:
+            env.reset()
+            prev_steer_idx = 7
+            for raw, expected in ((sv_max, 1.0), (sv_min, -1.0)):
+                env.step(np.array([[raw, 2.0]], dtype=np.float32))
+                obs, _, _, _, _ = env.step(np.array([[raw, 2.0]], dtype=np.float32))
+                assert np.isclose(obs[prev_steer_idx], expected, atol=1e-5), (
+                    f"raw sv={raw}: expected normalized {expected}, got {obs[prev_steer_idx]}"
+                )
+        finally:
+            env.close()
+
+
+class TestPrevThrottleCmdNormalization:
+    """End-to-end tests for prev_throttle_cmd in the normalized drift observation."""
+
+    PREV_THROTTLE_IDX = 8  # drift layout: [..., prev_steer (7), prev_throttle (8), ...]
+
+    @staticmethod
+    def _make_env(control_input, normalize_act, params):
+        return gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "std",
+                "observation_config": {"type": "drift"},
+                "control_input": control_input,
+                "params": params,
+                "normalize_act": normalize_act,
+                "normalize_obs": True,
+            },
+        )
+
+    def _step_twice(self, env, action):
+        """Step twice with the same action so prev_throttle_cmd holds it."""
+        env.step(action)
+        obs, _, _, _, _ = env.step(action)
+        return obs[self.PREV_THROTTLE_IDX]
+
+    def test_end_to_end_with_normalized_actions_accl(self):
+        """normalize_act=True + accl: bounds (-1, 1), raw value passes through normalization."""
+        params = GKEnv.f1tenth_std_vehicle_params()
+        env = self._make_env(["accl", "steering_angle"], normalize_act=True, params=params)
+        try:
+            env.reset()
+            for raw in (-1.0, 1.0, 0.0):
+                obs_val = self._step_twice(env, np.array([[0.0, raw]], dtype=np.float32))
+                assert np.isclose(obs_val, raw, atol=1e-5), f"raw={raw}: expected {raw}, got {obs_val}"
+        finally:
+            env.close()
+
+    def test_end_to_end_with_unnormalized_actions_accl(self):
+        """normalize_act=False + accl: bounds (-a_max, a_max), endpoints map to ±1."""
+        params = GKEnv.f1tenth_std_vehicle_params()
+        a_max = params["a_max"]
+        env = self._make_env(["accl", "steering_angle"], normalize_act=False, params=params)
+        try:
+            env.reset()
+            for raw, expected in ((-a_max, -1.0), (a_max, 1.0), (0.0, 0.0)):
+                obs_val = self._step_twice(env, np.array([[0.0, raw]], dtype=np.float32))
+                assert np.isclose(obs_val, expected, atol=1e-5), (
+                    f"raw={raw}: expected normalized {expected}, got {obs_val}"
+                )
+        finally:
+            env.close()
+
+    def test_end_to_end_with_unnormalized_actions_speed(self):
+        """normalize_act=False + speed: bounds (v_min, v_max), endpoints map to ±1.
+
+        drift includes integrated_vel_cmd which is accl-only-guarded, so use a frenet env
+        and construct a VectorObservation with just prev_throttle_cmd directly.
+        """
+        from gymkhana.envs.observation import VectorObservation
+
+        params = GKEnv.f1tenth_std_vehicle_params()
+        v_min, v_max = params["v_min"], params["v_max"]
+        env = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "std",
+                "observation_config": {"type": "frenet"},
+                "control_input": ["speed", "steering_angle"],
+                "params": params,
+                "normalize_act": False,
+                "normalize_obs": True,
+            },
+        )
+        try:
+            env.reset()
+            vec = VectorObservation(env.unwrapped, features=["prev_throttle_cmd"])
+            for raw, expected in ((v_min, -1.0), (v_max, 1.0)):
+                env.step(np.array([[0.0, raw]], dtype=np.float32))
+                env.step(np.array([[0.0, raw]], dtype=np.float32))
+                obs_val = vec.observe()[0]
+                assert np.isclose(obs_val, expected, atol=1e-5), (
+                    f"raw={raw}: expected normalized {expected}, got {obs_val}"
+                )
+        finally:
+            env.close()
 
 
 if __name__ == "__main__":

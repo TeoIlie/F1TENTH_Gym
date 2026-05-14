@@ -99,9 +99,9 @@ def construct_observation(x, y, track, norm_bounds, target_velocity, lookahead_n
         "delta": 0.0,
         "beta": 0.0,
         "prev_steering_cmd": 0.0,
-        "prev_accl_cmd": 0.0,
+        "prev_throttle_cmd": 0.0,
         "prev_avg_wheel_omega": target_velocity / WHEEL_RADIUS,
-        "curr_vel_cmd": target_velocity,
+        "integrated_vel_cmd": target_velocity,
         "lookahead_curvatures": lookahead_curvs,
         "lookahead_widths": lookahead_widths,
     }
@@ -117,9 +117,9 @@ def construct_observation(x, y, track, norm_bounds, target_velocity, lookahead_n
         "delta",
         "beta",
         "prev_steering_cmd",
-        "prev_accl_cmd",
+        "prev_throttle_cmd",
         "prev_avg_wheel_omega",
-        "curr_vel_cmd",
+        "integrated_vel_cmd",
         "lookahead_curvatures",
         "lookahead_widths",
     ]

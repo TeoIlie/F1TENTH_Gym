@@ -25,6 +25,7 @@ def _make_drift_env(normalize_obs: bool):
         "num_agents": 1,
         "model": "std",
         "observation_config": {"type": "drift"},
+        "control_input": ["accl", "steering_angle"],
         "params": GKEnv.f1tenth_std_vehicle_params(),
         "normalize_obs": normalize_obs,
         "record_obs_min_max": True,

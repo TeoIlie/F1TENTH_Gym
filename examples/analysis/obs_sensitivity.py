@@ -39,7 +39,7 @@ FEATURE_LABELS = [
     "prev_steer",
     "prev_accl",
     "prev_omega",
-    "curr_vel_cmd",
+    "integrated_vel_cmd",
     "curv_0",
     "curv_1",
     "curv_2",
@@ -61,7 +61,7 @@ IS_VEHICLE = [
     True,  # prev_steer
     True,  # prev_accl
     True,  # prev_omega
-    True,  # curr_vel_cmd
+    True,  # integrated_vel_cmd
     False,  # curv_0
     False,  # curv_1
     False,  # curv_2

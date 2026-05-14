@@ -27,6 +27,7 @@ class TestNormalizeObsDriftDefaults(unittest.TestCase):
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": True,
             },
@@ -97,6 +98,7 @@ class TestNormalizeObsUnnormalizedDrift(unittest.TestCase):
                     "num_agents": 1,
                     "model": "std",
                     "observation_config": {"type": "drift"},
+                    "control_input": ["accl", "steering_angle"],
                     "params": GKEnv.f1tenth_std_vehicle_params(),
                     "normalize_obs": False,
                 },
@@ -143,6 +145,7 @@ def test_normalize_override_false_with_drift():
                 "num_agents": 1,
                 "model": "std",
                 "observation_config": {"type": "drift"},
+                "control_input": ["accl", "steering_angle"],
                 "params": GKEnv.f1tenth_std_vehicle_params(),
                 "normalize_obs": False,
             },
@@ -174,6 +177,8 @@ def test_obs_type_model_pairing(obs_type, model, params_factory, expect_error):
         "num_agents": 1,
         "model": model,
         "observation_config": {"type": obs_type},
+        # 'drift' has integrated_vel_cmd (accl-only)
+        "control_input": ["accl", "steering_angle"] if obs_type == "drift" else ["speed", "steering_angle"],
         "params": params_factory(),
     }
     if expect_error:

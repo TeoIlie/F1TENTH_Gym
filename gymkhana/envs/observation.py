@@ -672,6 +672,18 @@ class VectorObservation(Observation):
     def __init__(self, env, features: List[str]):
         super().__init__(env)
         self.features = features
+
+        # integrated_vel_cmd is only meaningful under accl control; under speed mode it's a
+        # redundant low-pass of the user's speed command.
+        if "integrated_vel_cmd" in self.features:
+            long_type = self.env.unwrapped.action_type._longitudinal_action.type
+            if long_type != "accl":
+                raise ValueError(
+                    f"Observation feature 'integrated_vel_cmd' requires longitudinal control 'accl', "
+                    f"but the env is configured with '{long_type}'. Either switch control_input to 'accl' "
+                    f"or remove 'integrated_vel_cmd' from the observation features."
+                )
+
         self.bounds = {}
         self.normalize_obs = self.env.unwrapped.normalize_obs
         if self.normalize_obs:
@@ -703,13 +715,14 @@ class VectorObservation(Observation):
             "frenet_u": 1,
             "frenet_n": 1,
             "prev_steering_cmd": 1,
-            "prev_accl_cmd": 1,
-            "curr_accl_cmd": 1,
+            "prev_throttle_cmd": 1,
+            "curr_steering_cmd": 1,
+            "curr_throttle_cmd": 1,
             "lookahead_curvatures": lookahead_points,
             "lookahead_widths": 2 if self.env.unwrapped.sparse_width_obs else lookahead_points,
             "curr_avg_wheel_omega": 1,
             "prev_avg_wheel_omega": 1,
-            "curr_vel_cmd": 1,
+            "integrated_vel_cmd": 1,
         }
 
         complete_space_size = sum([obs_size_dict[k] for k in self.features])
@@ -794,13 +807,14 @@ class VectorObservation(Observation):
             "frenet_u": frenet_u,
             "frenet_n": frenet_n,
             "prev_steering_cmd": agent.prev_steering_cmd,
-            "prev_accl_cmd": agent.prev_accl_cmd,
-            "curr_accl_cmd": agent.curr_accl_cmd,
+            "prev_throttle_cmd": agent.prev_throttle_cmd,
+            "curr_steering_cmd": agent.curr_steering_cmd,
+            "curr_throttle_cmd": agent.curr_throttle_cmd,
             "lookahead_curvatures": lookahead_curvatures,
             "lookahead_widths": lookahead_widths,
             "curr_avg_wheel_omega": curr_avg_wheel_omega,
             "prev_avg_wheel_omega": prev_avg_wheel_omega,
-            "curr_vel_cmd": agent.curr_vel_cmd,
+            "integrated_vel_cmd": agent.integrated_vel_cmd,
         }
 
         # Store raw features before normalization/flattening (for min/max tracking)
@@ -829,7 +843,7 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
         type: Observation type string. Supported values:
             ``"original"``, ``"features"``, ``"kinematic_state"``,
             ``"dynamic_state"``, ``"frenet_dynamic_state"``, ``"rl"``,
-            ``"drift"``, ``"frenet"``, ``"race"``, ``"drift_st"``.
+            ``"drift"``, ``"drift_real"``, ``"frenet"``, ``"race"``, ``"drift_st"``.
             Defaults to ``"original"`` if None.
         **kwargs: Additional arguments forwarded to the observation constructor.
 
@@ -886,10 +900,23 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
             "ang_vel_z",  # r - yaw rate
             "delta",  # δ - measured steering angle
             "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
-            "prev_steering_cmd",  # δ_ref - previous commanded steering angle
-            "prev_accl_cmd",  # ω_dot_ref - last control input (acceleration)
+            "prev_steering_cmd",  # δ_ref - previous raw action[0]
+            "prev_throttle_cmd",  # u_long_ref - previous raw action[1]
             "prev_avg_wheel_omega",  # ω - previous measured wheel speed
-            "curr_vel_cmd",  # ω_ref - current commanded velocity (integrated from acceleration)
+            "integrated_vel_cmd",  # ω_ref - velocity command integrated from acceleration (requires accl control)
+            "lookahead_curvatures",  # c - track curvatures
+            "lookahead_widths",  # w - track widths
+        ]
+        return VectorObservation(env, features=features)
+    elif type == "drift_real":
+        features = [
+            "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
+            "linear_vel_y",  # vy - lateral velocity, vehicle frame
+            "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
+            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "ang_vel_z",  # r - yaw rate
+            "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
+            "curr_avg_wheel_omega",  # ω - current measured wheel speed
             "lookahead_curvatures",  # c - track curvatures
             "lookahead_widths",  # w - track widths
         ]
