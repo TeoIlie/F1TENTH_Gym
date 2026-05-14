@@ -353,17 +353,18 @@ class RaceCar(object):
 
         accl, sv = self.action_type.act(action=(steer, raw_throttle), state=self.state, params=self.params)
 
-        # Integrate accl into a velocity command. Reproducible on hardware in accl mode by
-        # re-applying AcclAction scaling to the cached raw throttle (guarded at obs construction).
-        self.integrated_vel_cmd = self.integrated_vel_cmd + accl * self.time_step
-        self.integrated_vel_cmd = np.clip(self.integrated_vel_cmd, self.params["v_min"], self.params["v_max"])
-
         u_np = np.array([sv, accl])
 
-        # Conditionally integrate dynamics (skip during reset to preserve exact state)
+        # Conditionally integrate dynamics (skip during reset to preserve exact state). The
+        # integrated_vel_cmd update is dynamics-derived state too, so it lives under the same guard.
         self.unstable = False
         self._unstable_info = None
         if not skip_integration:
+            # Integrate accl into a velocity command. Reproducible on hardware in accl mode by
+            # re-applying AcclAction scaling to the cached raw throttle (guarded at obs construction).
+            self.integrated_vel_cmd = self.integrated_vel_cmd + accl * self.time_step
+            self.integrated_vel_cmd = np.clip(self.integrated_vel_cmd, self.params["v_min"], self.params["v_max"])
+
             f_dynamics = self.model.f_dynamics
             prev_state = self.state.copy()
             # MB dynamics is unjitted Python that reads params["..."]; everything else
