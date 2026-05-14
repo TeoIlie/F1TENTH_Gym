@@ -28,7 +28,6 @@ track_pool:
 # Observation
 record_obs_min_max: true
 sparse_width_obs: true
-observation_type: "drift_real"
 
 # Reset configuration
 track_direction: "random"

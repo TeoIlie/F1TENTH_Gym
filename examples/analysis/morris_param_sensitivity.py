@@ -20,6 +20,8 @@ Usage:
     python examples/analysis/morris_param_sensitivity.py --run_id 178a1a5l
     python examples/analysis/morris_param_sensitivity.py --run_id 178a1a5l --n-trajectories 15 --n-episodes 5
     python examples/analysis/morris_param_sensitivity.py --run_id 178a1a5l --perturbation 0.3
+    python examples/analysis/morris_param_sensitivity.py --path /path/to/model.zip
+    python examples/analysis/morris_param_sensitivity.py --path /path/to/model.zip --n-trajectories 15
 """
 
 import argparse
@@ -37,12 +39,14 @@ try:
 except ImportError:
     raise ImportError("SALib is required for Morris sensitivity analysis. Install with: pip install SALib")
 
-from train.config.env_config import get_drift_test_config, get_env_id
+from train.config.env_config import PARAMS, get_drift_test_config, get_env_id
 
-# Parameters to analyze, grouped by category.
-# Only includes params that affect dynamics (excludes known-exact limits/geometry).
+# Category mapping for parameters that may appear in a vehicle param set.
+# Filtered against the active PARAMS dict at module load so the analysis adapts
+# to whichever param set ``env_config.PARAMS`` is using (ST, STD, etc.).
+# Excludes known-exact limits/geometry (s_max, v_max, width, ...).
 # fmt: off
-PARAM_DEFINITIONS = {
+_PARAM_CATEGORIES = {
     # Vehicle dynamics
     "mu":       "vehicle",
     "C_Sf":     "vehicle",
@@ -77,6 +81,9 @@ PARAM_DEFINITIONS = {
 }
 # fmt: on
 
+# Filter to keys actually present in the active param set.
+PARAM_DEFINITIONS = {name: cat for name, cat in _PARAM_CATEGORIES.items() if name in PARAMS}
+
 CATEGORY_COLORS = {
     "vehicle": "#DAA520",
     "tire_long": "#4682B4",
@@ -95,7 +102,7 @@ CATEGORY_LABELS = {
 def parse_args():
     parser = argparse.ArgumentParser(description="Morris method parameter sensitivity analysis for STD dynamics model")
     parser.add_argument(
-        "--run_id", type=str, required=True, help="Wandb run ID (used for default model path and output dir)"
+        "--run_id", type=str, default=None, help="Wandb run ID (used for default model path and output filenames)"
     )
     parser.add_argument(
         "--path",
@@ -113,7 +120,10 @@ def parse_args():
         help="Fractional perturbation range, e.g. 0.2 = +-20%% (default: 0.2)",
     )
     parser.add_argument("--output", type=str, default=None, help="Output directory (default: auto-generated)")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.run_id is None and args.path is None:
+        parser.error("must provide either --run_id or --path")
+    return args
 
 
 def define_problem(nominal_params, perturbation):
@@ -268,8 +278,8 @@ def create_scatter_plot(si, param_names, output_path, run_id):
 
 def main():
     args = parse_args()
-    run_id = args.run_id
-    model_path = args.path if args.path else f"outputs/downloads/{run_id}/model.zip"
+    model_path = args.path or f"outputs/downloads/{args.run_id}/model.zip"
+    run_id = args.run_id or Path(args.path).stem  # used for plot titles + output filenames
 
     # Load model
     print(f"Loading PPO model from: {model_path}")
