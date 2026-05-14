@@ -33,10 +33,10 @@ from train.train_utils import get_output_dirs, print_header
 # CLASSIC CONTROLLERS
 # ==========================
 
-CONTROLLER_TYPE = "stanley"
-DESC = "stanley"
-LEARNED_TYPE = ""
-RUN_ID = ""
+# CONTROLLER_TYPE = "stanley"
+# DESC = "stanley"
+# LEARNED_TYPE = ""
+# RUN_ID = ""
 
 # CONTROLLER_TYPE = "stmpc"
 # DESC = "Single-track MPC controller with acados + CasAdi, ported from ForzaETH"
@@ -47,7 +47,11 @@ RUN_ID = ""
 # LEARNED RL CONTROLLERS
 # ==========================
 
-# CONTROLLER_TYPE = "learned"
+CONTROLLER_TYPE = "learned"
+
+LEARNED_TYPE = "drift"
+RUN_ID = "gs9xfxhy"
+DESC = "drift model - new ID'd params, 'speed' not 'accl' control, drift_real obs space, log_std fix applied"
 
 # LEARNED_TYPE = "drift"
 # RUN_ID = "wx0w5eqr"
@@ -157,9 +161,9 @@ S = 96  # Arc length on IMS straight section
 SEED = 42
 
 # Grid parameters (radians / rad/s / m/s)
-BETA_VALUES = np.linspace(-1.39, 1.39, 7)  # 10 points, +/-60 deg
-R_VALUES = np.linspace(-13, 13, 7)  # 10 points, +/-180 deg/s
-V_VALUES = np.linspace(4, 5, 2)  # 3 points: [2, 7, 12]
+BETA_VALUES = np.linspace(-1.0472, 1.0472, 7)  # 10 points, +/-60 deg
+R_VALUES = np.linspace(-6.5, 6.5, 7)  # 10 points, +/-372 deg/s
+V_VALUES = np.linspace(3, 4, 2)  # 3 points: [2, 7, 12]
 YAW_VALUES = np.linspace(-0.17, 0.17, 3)  # 3 points: [-10, 0, +10] deg
 
 

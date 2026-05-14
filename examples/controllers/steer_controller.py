@@ -27,14 +27,14 @@ TARGET_SPEED = 2.0  # m/s
 # config constants
 LOOKAHEAD_N_POINTS = 10
 LOOKAHEAD_DS = 0.3
-OBS_TYPE = "drift"
+OBS_TYPE = "drift_real"
 
 # obs indices for state extraction
 LINEAR_VEL_X_I = 0
 FRENET_U_I = 2
 FRENET_N_I = 3
 R_I = 4
-BETA_I = 6
+BETA_I = 5
 
 
 class PDSteerController(Controller):
