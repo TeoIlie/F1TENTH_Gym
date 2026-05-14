@@ -348,3 +348,30 @@ def make_instability_callback(train_config: dict, save_freq: int = CKPT_SAVE_FRE
     if not train_config.get("prevent_instability", False):
         return None
     return InstabilityCountCallback(save_freq=save_freq)
+
+
+class LogStdScheduleCallback(BaseCallback):
+    """Linearly anneal policy ``log_std`` from ``start`` to ``end`` over ``total_timesteps``;
+    freezes the parameter so the schedule fully controls action noise.
+
+    Closes the stochastic-vs-deterministic train/eval gap. See docs/training.rst.
+    """
+
+    def __init__(self, start: float, end: float, total_timesteps: int, verbose: int = 0):
+        super().__init__(verbose)
+        if total_timesteps <= 0:
+            raise ValueError(f"total_timesteps must be positive, got {total_timesteps}")
+        self.start = start
+        self.end = end
+        self.total = total_timesteps
+
+    def _on_training_start(self) -> None:
+        self.model.policy.log_std.data.fill_(self.start)
+        self.model.policy.log_std.requires_grad_(False)
+
+    def _on_step(self) -> bool:
+        frac = min(self.num_timesteps / self.total, 1.0)
+        target = self.start + frac * (self.end - self.start)
+        self.model.policy.log_std.data.fill_(target)
+        self.logger.record("train/log_std_scheduled", target)
+        return True

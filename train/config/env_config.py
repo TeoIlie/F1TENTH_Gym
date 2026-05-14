@@ -33,6 +33,14 @@ ADDITIONAL_TIMESTEPS = _rl_config["additional_timesteps"]
 TRANSFER_RESET_LOG_STD = _rl_config["transfer_reset_log_std"]
 TRANSFER_RESET_CRITIC = _rl_config["transfer_reset_critic"]
 
+# log_std schedule for fresh training (mode 't'). None when disabled (block commented out).
+LOG_STD_SCHEDULE = _rl_config.get("log_std_schedule")
+if LOG_STD_SCHEDULE is not None:
+    _required = {"init", "end"}
+    _got = set(LOG_STD_SCHEDULE.keys())
+    if _got != _required:
+        raise ValueError(f"log_std_schedule must have keys exactly {sorted(_required)}, got {sorted(_got)}")
+
 
 # ====================================
 # Gym config

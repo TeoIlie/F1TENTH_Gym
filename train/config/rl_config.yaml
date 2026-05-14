@@ -15,6 +15,13 @@ use_custom_relu: false   # if true, use LeakyReLU (with act_func_neg_slope) inst
 actor_layer_size: 64     # hidden layer size for actor (pi) network (2 layers)
 critic_layer_size: 64    # hidden layer size for critic (vf) network (2 layers)
 
+# log_std schedule for fresh training (--m t). Linear anneal init -> end over total_timesteps.
+# Closes the stochastic-vs-deterministic train/eval gap. Comment out block to disable.
+# See docs/training.rst for rationale.
+log_std_schedule:
+  init: -1.0    # σ ≈ 0.37
+  end: -3.0     # σ ≈ 0.05
+
 # Transfer/continue training defaults (mode 'f')
 additional_timesteps: 100000000  # additional timesteps for transfer/continue training
 transfer_reset_log_std: -0.5  # reset log_std to this value; use null to skip reset

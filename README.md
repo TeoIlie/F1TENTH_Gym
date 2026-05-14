@@ -121,6 +121,8 @@ python3 train/ppo_race.py --m t
 
 Detailed usage guidelines are at the top of the training script files.
 
+Fresh training runs apply a `log_std` schedule that linearly anneals the policy's action noise from `init` to `end` across total timesteps (configured in `train/config/rl_config.yaml` under `log_std_schedule`). This closes the stochastic-vs-deterministic train/eval gap that otherwise arises with SB3's default `log_std_init=0`. Comment out the block to disable.
+
 ### Wandb
 
 By default, all training models are synced to **wandb**, with training data for runs saved to `/wandb` folder.

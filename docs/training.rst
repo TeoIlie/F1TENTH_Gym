@@ -57,6 +57,21 @@ Instability prevention
 
 When ``prevent_instability: true`` is set in the gym config, every ``RaceCar`` runs a sanity check on the post-RK4 standardized state and reverts to the pre-step state on any violation, while the env truncates the episode with ``info["instability_truncation"] = True`` and a populated ``info["unstable_info"]``. An ``InstabilityCountCallback`` is attached automatically and logs the total event count summed across subprocs to wandb under ``instability/total`` every ``CKPT_SAVE_FREQ`` env steps (and once at training end). At end-of-run the per-env breakdown is printed to stdout. The detection bounds are configurable via ``instability_yaw_rate_bound`` and ``instability_slip_bound`` (defaults: ``4π`` rad/s and ``π/2`` rad).
 
+``log_std`` schedule
+--------------------
+
+When the ``log_std_schedule`` block is present in ``train/config/rl_config.yaml``, a ``LogStdScheduleCallback`` is attached to fresh training runs (``--m t``). It linearly anneals the policy's ``log_std`` from ``init`` to ``end`` across ``total_timesteps`` and freezes the parameter so the schedule fully controls action noise.
+
+This closes the stochastic-vs-deterministic train/eval gap: SB3's default ``log_std_init=0`` (σ=1.0 over normalized actions) lets the actor mean drift to a noise-dependent attractor — a policy that scores well on noisy PPO rollouts but fails under deterministic eval. Annealing toward zero forces rollout trajectories to resemble deterministic-eval trajectories so the gradient optimizes the mean against samples that match what eval sees.
+
+.. code:: yaml
+
+   log_std_schedule:
+     init: -1.0    # σ ≈ 0.37 in normalized action space
+     end: -3.0     # σ ≈ 0.05; near-deterministic
+
+Comment out the whole block to disable (policy then uses SB3 default ``log_std_init=0``, which reproduces the gap; only for ablation). Applies only to fresh training (``--m t``); ``--m c`` and ``--m f`` use the existing ``transfer_reset_log_std`` knob. The scheduled target is logged to wandb under ``train/log_std_scheduled``.
+
 Curriculum learning
 -------------------
 
