@@ -32,6 +32,8 @@ CRITIC_LAYER_SIZE = _rl_config["critic_layer_size"]
 ADDITIONAL_TIMESTEPS = _rl_config["additional_timesteps"]
 TRANSFER_RESET_LOG_STD = _rl_config["transfer_reset_log_std"]
 TRANSFER_RESET_CRITIC = _rl_config["transfer_reset_critic"]
+LOG_STD_INIT = _rl_config["log_std_init"]
+LOG_STD_END = _rl_config["log_std_end"]
 
 
 # ====================================

@@ -429,6 +429,12 @@ def extract_rl_config(model: object, total_timesteps: int, n_envs: int) -> dict:
         config["actor_layer_size"] = net_arch
         config["critic_layer_size"] = net_arch
 
+    # Record the policy's initial log_std (set via policy_kwargs at construction).
+    # The schedule's end value lives in rl_config.yaml; init is the more meaningful
+    # snapshot since by the time this runs, the schedule has already started overwriting it.
+    if hasattr(model.policy, "log_std"):
+        config["policy_log_std_current"] = model.policy.log_std.data.mean().item()
+
     return config
 
 

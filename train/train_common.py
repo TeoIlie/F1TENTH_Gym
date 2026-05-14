@@ -14,7 +14,12 @@ from stable_baselines3.common.policies import BasePolicy
 from wandb.integration.sb3 import WandbCallback
 
 import wandb
-from train.callbacks import make_curriculum_callback, make_instability_callback, make_obs_min_max_callback
+from train.callbacks import (
+    make_curriculum_callback,
+    make_instability_callback,
+    make_log_std_schedule_callback,
+    make_obs_min_max_callback,
+)
 from train.config.env_config import (
     ACTOR_LAYER_SIZE,
     ADDITIONAL_TIMESTEPS,
@@ -23,6 +28,8 @@ from train.config.env_config import (
     CRITIC_LAYER_SIZE,
     END_LEARNING_RATE,
     EVAL_SEED,
+    LOG_STD_END,
+    LOG_STD_INIT,
     N_ENVS,
     N_STEPS,
     SEED,
@@ -102,6 +109,7 @@ def train(profile: TrainingProfile):
 
     policy_kwargs = dict(
         net_arch=dict(pi=[ACTOR_LAYER_SIZE, ACTOR_LAYER_SIZE], vf=[CRITIC_LAYER_SIZE, CRITIC_LAYER_SIZE]),
+        log_std_init=LOG_STD_INIT,
     )
     if USE_CUSTOM_RELU:
         policy_kwargs["activation_fn"] = CustomLeakyReLU
@@ -144,6 +152,7 @@ def train(profile: TrainingProfile):
     instability_cb = make_instability_callback(profile.train_config)
     if instability_cb is not None:
         callbacks.append(instability_cb)
+    callbacks.append(make_log_std_schedule_callback(LOG_STD_INIT, LOG_STD_END, TOTAL_TIMESTEPS))
 
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,

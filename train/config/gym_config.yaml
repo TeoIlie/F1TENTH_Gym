@@ -40,7 +40,7 @@ train_debug_render: false
 
 # Callback config
 ckpt_save_freq: 10000 # reused for EvalCallback and custom CurriculumLearningCallback
-n_eval_episodes: 5
+n_eval_episodes: 15
 
 # =================================
 #   RECOVERY MODE CONFIG
