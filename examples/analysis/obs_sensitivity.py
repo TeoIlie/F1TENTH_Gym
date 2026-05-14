@@ -26,20 +26,16 @@ from stable_baselines3 import PPO
 
 from train.config.env_config import get_drift_test_config, get_env_id
 
-# Feature labels matching the "drift" observation type order (observation.py lines 878-894)
-# With 5 lookahead points and sparse widths (first & last) = 18 total
+# Feature labels matching the "drift_real" observation type order (observation.py:911-922)
+# With 5 lookahead points and sparse widths (first & last) = 14 total
 FEATURE_LABELS = [
     "vx",
     "vy",
     "u (heading)",
     "n (lateral)",
     "r (yaw rate)",
-    "delta",
     "beta",
-    "prev_steer",
-    "prev_accl",
-    "prev_omega",
-    "integrated_vel_cmd",
+    "curr_omega",
     "curv_0",
     "curv_1",
     "curv_2",
@@ -56,12 +52,8 @@ IS_VEHICLE = [
     False,  # u (heading error - track-relative)
     False,  # n (lateral error - track-relative)
     True,  # r (yaw rate)
-    True,  # delta
     True,  # beta
-    True,  # prev_steer
-    True,  # prev_accl
-    True,  # prev_omega
-    True,  # integrated_vel_cmd
+    True,  # curr_omega
     False,  # curv_0
     False,  # curv_1
     False,  # curv_2
