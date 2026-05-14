@@ -351,12 +351,10 @@ def make_instability_callback(train_config: dict, save_freq: int = CKPT_SAVE_FRE
 
 
 class LogStdScheduleCallback(BaseCallback):
-    """Linearly anneal the policy's log_std from `start` to `end` across `total_timesteps`.
+    """Linearly anneal policy ``log_std`` from ``start`` to ``end`` over ``total_timesteps``;
+    freezes the parameter so the schedule fully controls action noise.
 
-    Mitigates the stochastic-vs-deterministic train/eval gap: keeps rollout trajectories
-    close to deterministic-eval trajectories so the policy gradient optimizes the mean
-    against samples that resemble what eval will see. Freezes log_std at training start
-    so the gradient does not waste updates on a parameter that is overwritten each step.
+    Closes the stochastic-vs-deterministic train/eval gap. See docs/training.rst.
     """
 
     def __init__(self, start: float, end: float, total_timesteps: int, verbose: int = 0):
@@ -377,10 +375,3 @@ class LogStdScheduleCallback(BaseCallback):
         self.model.policy.log_std.data.fill_(target)
         self.logger.record("train/log_std_scheduled", target)
         return True
-
-
-def make_log_std_schedule_callback(
-    log_std_init: float, log_std_end: float, total_timesteps: int
-) -> LogStdScheduleCallback:
-    """Factory: always-on log_std annealer for fresh training runs."""
-    return LogStdScheduleCallback(start=log_std_init, end=log_std_end, total_timesteps=total_timesteps)
