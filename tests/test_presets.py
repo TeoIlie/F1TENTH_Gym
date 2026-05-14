@@ -9,8 +9,8 @@ class TestDriftConfig(unittest.TestCase):
     def test_defaults(self):
         cfg = drift_config()
         self.assertEqual(cfg["model"], "std")
-        self.assertEqual(cfg["control_input"], ["accl", "steering_angle"])
-        self.assertEqual(cfg["observation_config"], {"type": "drift"})
+        self.assertEqual(cfg["control_input"], ["speed", "steering_angle"])
+        self.assertEqual(cfg["observation_config"], {"type": "drift_real"})
         self.assertTrue(cfg["normalize_obs"])
         self.assertTrue(cfg["normalize_act"])
         self.assertIn("params", cfg)

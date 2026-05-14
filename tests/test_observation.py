@@ -239,7 +239,9 @@ class TestDriftObservation(unittest.TestCase):
         cls.config["normalize_obs"] = False
         cls.config["sparse_width_obs"] = False
         # Pin to "drift"; yaml default may differ (e.g. drift_real) and break feature indexing.
+        # "drift" obs requires "accl" longitudinal control (see observation.py:680).
         cls.config["observation_config"] = {"type": "drift"}
+        cls.config["control_input"] = ["accl", "steering_angle"]
         cls.lookahead_n_points = cls.config["lookahead_n_points"]
         cls.lookahead_ds = cls.config["lookahead_ds"]
 
