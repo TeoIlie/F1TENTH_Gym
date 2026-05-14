@@ -13,7 +13,7 @@ import torch.nn as nn
 import yaml
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 import wandb
 from gymkhana.envs.gymkhana_env import GKEnv, print_obs_min_max_stats
@@ -27,6 +27,18 @@ from train.config.env_config import (
     N_EVAL_EPISODES,
     get_env_id,
 )
+
+
+def _validate_track_names(track_pool: list[str]) -> None:
+    """Fail fast if any name in ``track_pool`` isn't a loadable Track."""
+    for map_name in track_pool:
+        try:
+            Track.from_track_name(map_name)
+        except FileNotFoundError as e:
+            raise ValueError(
+                f"Invalid track name '{map_name}' in track_pool. "
+                f"Please check available tracks in the 'maps/' directory."
+            ) from e
 
 
 def make_subprocvecenv(seed: int, config: dict, n_envs: int, track_pool: list[str] | None = None) -> SubprocVecEnv:
@@ -51,14 +63,7 @@ def make_subprocvecenv(seed: int, config: dict, n_envs: int, track_pool: list[st
 
         # Validate all track names exist before creating subprocesses
         # This provides better error messages than subprocess failures
-        for track_name in track_pool:
-            try:
-                Track.from_track_name(track_name)
-            except FileNotFoundError as e:
-                raise ValueError(
-                    f"Invalid track name '{track_name}' in track_pool. "
-                    f"Please check available tracks in the 'maps/' directory."
-                ) from e
+        _validate_track_names(track_pool)
 
         # Create environments with different maps
         env_fns = []
@@ -351,16 +356,28 @@ def log_best_eval_timestep(models_dir: str):
     print(f"\nBest eval/mean_reward: {mean_rewards[best_idx]:.2f} at timestep {timesteps[best_idx]}")
 
 
-def make_eval_env(seed: int, config: dict, record_obs_min_max: bool = False):
+def make_eval_env(seed: int, config: dict) -> DummyVecEnv:
+    """Build a DummyVecEnv for EvalCallback: one env per map in ``config["track_pool"]``,
+    or a single env when ``track_pool`` is ``None`` (recovery picks ``recovery_map``).
+    Forces ``record_obs_min_max=False``; pins ``track_direction`` to ``"normal"`` only
+    when it was ``"random"`` (eliminates per-episode direction noise).
     """
-    Create a single evaluation environment for EvalCallback. By default, it does not
-    record obs min/max
-    """
-    eval_config = {**config, "record_obs_min_max": record_obs_min_max}
-    env = gym.make(get_env_id(), config=eval_config)
-    env = Monitor(env)
-    env.reset(seed=seed)
-    return env
+    base = {**config, "record_obs_min_max": False}
+    if base.get("track_direction") == "random":
+        base["track_direction"] = "normal"
+
+    track_pool = config.get("track_pool")
+    if track_pool:
+        _validate_track_names(track_pool)
+        env_configs = [{**base, "map": m} for m in track_pool]
+        label = f"track distribution {dict(Counter(track_pool))}"
+    else:
+        env_configs = [base]
+        label = "single env (no map override; recovery uses recovery_map)"
+
+    vec_env = DummyVecEnv([make_env(seed=seed, rank=i, config=c) for i, c in enumerate(env_configs)])
+    print(f"✅ Successfully created {len(env_configs)} eval env(s) as DummyVecEnv with seed {seed}: {label}")
+    return vec_env
 
 
 def save_full_gym_config(update_config: dict, config_dir: str, filename: str) -> None:
@@ -441,9 +458,12 @@ def extract_rl_config(model: object, total_timesteps: int, n_envs: int) -> dict:
 def extract_norm_bounds(eval_env) -> dict | None:
     """Extract normalization bounds from eval env's observation type, if available.
 
+    All envs in the eval DummyVecEnv share the same observation config (only
+    ``map`` differs, which doesn't affect features/bounds -- same invariant as
+    ``merge_obs_min_max``), so reading from ``envs[0]`` is sufficient.
     Returns a serializable dict of {feature: {min, max}} or None if normalization is disabled.
     """
-    env = eval_env.unwrapped
+    env = eval_env.envs[0].unwrapped
     if not env.normalize_obs:
         return None
     bounds = env.observation_type.bounds
