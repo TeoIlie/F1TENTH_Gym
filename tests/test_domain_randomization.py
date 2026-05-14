@@ -342,12 +342,9 @@ def test_make_eval_env_disables_train_only_features():
     for getter in (get_drift_test_config, get_recovery_test_config):
         eval_env = make_eval_env(seed=0, config=getter())
         try:
-            assert eval_env.unwrapped.dr_sigmas == {}, (
-                f"{getter.__name__} eval env has active DR: {eval_env.unwrapped.dr_sigmas}"
-            )
-            assert eval_env.unwrapped.record_obs_min_max is False, (
-                f"{getter.__name__} eval env has record_obs_min_max enabled"
-            )
+            inner = eval_env.envs[0].unwrapped
+            assert inner.dr_sigmas == {}, f"{getter.__name__} eval env has active DR: {inner.dr_sigmas}"
+            assert inner.record_obs_min_max is False, f"{getter.__name__} eval env has record_obs_min_max enabled"
         finally:
             eval_env.close()
 

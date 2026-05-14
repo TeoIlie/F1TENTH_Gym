@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -227,6 +228,94 @@ class TestMakeSubprocvecenvMultiMap(unittest.TestCase):
         error_msg = str(context.exception)
         self.assertIn("Invalid track name", error_msg)
         self.assertIn("InvalidTrackName123", error_msg)
+
+
+class TestMakeEvalEnv(unittest.TestCase):
+    """Test make_eval_env: multi-map distribution, recovery fallback, direction pinning.
+
+    Mocks ``make_env``, ``DummyVecEnv``, and ``_validate_track_names`` so the tests
+    verify config flow without paying for real gym env construction (~1.2s each).
+    """
+
+    def _capture_eval_configs(self, eval_config: dict) -> list[dict]:
+        """Run make_eval_env with construction mocked out; return the per-env config dicts."""
+        captured = []
+
+        def fake_make_env(seed, rank, config):
+            captured.append(config)
+            return lambda: MagicMock()
+
+        with (
+            patch("train.train_utils.make_env", side_effect=fake_make_env),
+            patch("train.train_utils.DummyVecEnv", return_value=MagicMock()),
+            patch("train.train_utils._validate_track_names"),
+        ):
+            from train.train_utils import make_eval_env
+
+            make_eval_env(seed=0, config=eval_config)
+
+        return captured
+
+    def test_track_pool_creates_one_env_per_map(self):
+        """Race config -> one config per map, with config['map'] set per env."""
+        from train.config.env_config import get_drift_test_config
+
+        config = get_drift_test_config()
+        track_pool = config["track_pool"]
+
+        captured = self._capture_eval_configs(config)
+        self.assertEqual(len(captured), len(track_pool))
+        self.assertEqual([c["map"] for c in captured], track_pool)
+
+    def test_no_track_pool_creates_single_env(self):
+        """Recovery config (track_pool=None) -> single config dict; no KeyError."""
+        from train.config.env_config import get_recovery_test_config
+
+        captured = self._capture_eval_configs(get_recovery_test_config())
+        self.assertEqual(len(captured), 1)
+
+    def test_pins_random_direction_to_normal(self):
+        """track_direction='random' must be pinned to 'normal' for deterministic eval."""
+        from train.config.env_config import get_drift_test_config
+
+        config = get_drift_test_config()
+        config["track_direction"] = "random"
+
+        captured = self._capture_eval_configs(config)
+        for c in captured:
+            self.assertEqual(c["track_direction"], "normal")
+
+    def test_respects_explicit_direction(self):
+        """Explicit 'normal' / 'reverse' must pass through unmodified."""
+        from train.config.env_config import get_drift_test_config
+
+        for direction in ("normal", "reverse"):
+            config = get_drift_test_config()
+            config["track_direction"] = direction
+            captured = self._capture_eval_configs(config)
+            for c in captured:
+                self.assertEqual(c["track_direction"], direction)
+
+    def test_rejects_empty_or_non_list_track_pool(self):
+        """track_pool=[] or non-list must raise (vs None which is the recovery fallback)."""
+        from train.config.env_config import get_drift_test_config
+
+        for bad in ([], "Drift", {}):
+            config = get_drift_test_config()
+            config["track_pool"] = bad
+            with self.assertRaises(ValueError) as ctx:
+                self._capture_eval_configs(config)
+            self.assertIn("non-empty list", str(ctx.exception))
+
+    def test_get_eval_callback_rejects_too_few_episodes(self):
+        """n_eval_episodes < eval_env.num_envs must raise (else some maps get 0 rollouts)."""
+        from train.train_utils import get_eval_callback
+
+        mock_env = MagicMock()
+        mock_env.num_envs = 4
+        with self.assertRaises(ValueError) as ctx:
+            get_eval_callback(eval_env=mock_env, models_dir="/tmp", n_eval_episodes=3)
+        self.assertIn("must be >=", str(ctx.exception))
 
 
 if __name__ == "__main__":
