@@ -331,6 +331,12 @@ def get_eval_callback(
         eval_freq: Evaluation frequency in steps (default: CKPT_SAVE_FREQ)
         n_eval_episodes: Number of episodes per evaluation (default: 5)
     """
+    num_envs = getattr(eval_env, "num_envs", 1)
+    if n_eval_episodes < num_envs:
+        raise ValueError(
+            f"n_eval_episodes ({n_eval_episodes}) must be >= eval_env.num_envs ({num_envs}) "
+            f"to evaluate every map at least once."
+        )
     return EvalCallback(
         eval_env=eval_env,
         best_model_save_path=f"{models_dir}/{BEST_MODEL}",
@@ -367,7 +373,9 @@ def make_eval_env(seed: int, config: dict) -> DummyVecEnv:
         base["track_direction"] = "normal"
 
     track_pool = config.get("track_pool")
-    if track_pool:
+    if track_pool is not None:
+        if not isinstance(track_pool, list) or len(track_pool) == 0:
+            raise ValueError("track_pool must be a non-empty list")
         _validate_track_names(track_pool)
         env_configs = [{**base, "map": m} for m in track_pool]
         label = f"track distribution {dict(Counter(track_pool))}"

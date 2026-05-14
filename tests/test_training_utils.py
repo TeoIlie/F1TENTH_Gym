@@ -296,6 +296,27 @@ class TestMakeEvalEnv(unittest.TestCase):
             for c in captured:
                 self.assertEqual(c["track_direction"], direction)
 
+    def test_rejects_empty_or_non_list_track_pool(self):
+        """track_pool=[] or non-list must raise (vs None which is the recovery fallback)."""
+        from train.config.env_config import get_drift_test_config
+
+        for bad in ([], "Drift", {}):
+            config = get_drift_test_config()
+            config["track_pool"] = bad
+            with self.assertRaises(ValueError) as ctx:
+                self._capture_eval_configs(config)
+            self.assertIn("non-empty list", str(ctx.exception))
+
+    def test_get_eval_callback_rejects_too_few_episodes(self):
+        """n_eval_episodes < eval_env.num_envs must raise (else some maps get 0 rollouts)."""
+        from train.train_utils import get_eval_callback
+
+        mock_env = MagicMock()
+        mock_env.num_envs = 4
+        with self.assertRaises(ValueError) as ctx:
+            get_eval_callback(eval_env=mock_env, models_dir="/tmp", n_eval_episodes=3)
+        self.assertIn("must be >=", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
