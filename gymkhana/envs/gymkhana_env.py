@@ -1087,6 +1087,8 @@ class GKEnv(gym.Env):
                     "vx_bounds": (self.params["v_min"], self.params["v_max"]),
                 }
             )
+        if self.render_spec is not None and getattr(self.render_spec, "show_trails", False):
+            self.render_obs["slip"] = np.array([a.standard_state["slip"] for a in self.sim.agents])
         if self.render_spec is not None and self.render_spec.show_obs_debug:
             self.render_obs.update(
                 {

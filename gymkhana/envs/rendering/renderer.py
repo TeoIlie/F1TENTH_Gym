@@ -21,6 +21,15 @@ class RenderSpec:
     show_obs_debug: Optional[bool] = False
     vehicle_palette: Optional[list[str]] = None
     render_type: Optional[str] = "pygame"
+    show_trails: Optional[bool] = False
+    trail_length: Optional[int] = 200
+    trail_emit_every: Optional[int] = 1
+    trail_point_size: Optional[int] = 3
+    trail_max_alpha: Optional[int] = 180
+    trail_color: Optional[list[int]] = None
+    trail_slip_threshold_deg: Optional[float] = 10.0
+    trail_slip_full_deg: Optional[float] = 30.0
+    trail_decay_per_step: Optional[float] = 0.97
 
     def __init__(
         self,
@@ -34,6 +43,15 @@ class RenderSpec:
         show_obs_debug: bool = False,
         vehicle_palette: list[str] = None,
         render_type: str = "pygame",
+        show_trails: bool = False,
+        trail_length: int = 200,
+        trail_emit_every: int = 1,
+        trail_point_size: int = 3,
+        trail_max_alpha: int = 180,
+        trail_color: list[int] = None,
+        trail_slip_threshold_deg: float = 10.0,
+        trail_slip_full_deg: float = 30.0,
+        trail_decay_per_step: float = 0.97,
     ) -> None:
         """
         Initialize rendering specification.
@@ -65,6 +83,15 @@ class RenderSpec:
         self.show_obs_debug = show_obs_debug
         self.vehicle_palette = vehicle_palette or ["#984ea3"]
         self.render_type = render_type
+        self.show_trails = show_trails
+        self.trail_length = trail_length
+        self.trail_emit_every = trail_emit_every
+        self.trail_point_size = trail_point_size
+        self.trail_max_alpha = trail_max_alpha
+        self.trail_color = tuple(trail_color) if trail_color is not None else (40, 40, 40)
+        self.trail_slip_threshold_deg = trail_slip_threshold_deg
+        self.trail_slip_full_deg = trail_slip_full_deg
+        self.trail_decay_per_step = trail_decay_per_step
 
     @staticmethod
     def from_yaml(yaml_file: str | pathlib.Path, overrides: Optional[dict] = None):

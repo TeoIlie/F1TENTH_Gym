@@ -2,6 +2,15 @@ window_size: 800      # [px] width and height of the window
 focus_on: null     # [str] agent id to focus on (e.g., agent_0) or null for map view
 zoom_in_factor: 1.5   # [float] zoom in factor. 1.0 is no zoom, >1.0 is zoom in, <1.0 is zoom out
 show_wheels: True     # [bool] it toggles the visualization of the vehicle wheels
+show_trails: True     # [bool] it toggles the fading tire trails (skid marks)
+trail_length: 200     # [int] number of points kept per tire ring buffer
+trail_emit_every: 1   # [int] emit one trail point every N render calls (decimation)
+trail_point_size: 6   # [int] skid-mark line width in pixels
+trail_max_alpha: 180  # [int 0-255] max alpha at full slip; pen alpha scales with slip intensity
+trail_color: [40, 40, 40]  # [list[int]] RGB for skid marks (dark grey)
+trail_slip_threshold_deg: 10.0  # [float] |slip| below this (in degrees) emits no marks
+trail_slip_full_deg: 30.0       # [float] |slip| at which marks reach trail_max_alpha; linear ramp between threshold and this
+trail_decay_per_step: 0.97      # [float, 0-1] multiplicative intensity decay per render call (≈fades to 5% in ~1s at 100 Hz)
 car_tickness: 1       # [px] thickness of the car
 show_info: True       # [bool] it toggles the visualization of the instruction text
 show_ctr_debug: True # [bool] it toggles the control debug panel at the bottom of the window
