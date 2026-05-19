@@ -31,6 +31,7 @@ from train.config.env_config import (
     LOG_STD_SCHEDULE,
     N_ENVS,
     N_STEPS,
+    PARAMS,
     SEED,
     START_LEARNING_RATE,
     TOTAL_TIMESTEPS,
@@ -44,8 +45,8 @@ from train.train_utils import (
     CustomLeakyReLU,
     aggregate_and_print_instability_count,
     aggregate_and_print_obs_min_max,
+    build_deploy_config,
     download_model_from_wandb,
-    extract_norm_bounds,
     extract_rl_config,
     generate_run_id,
     get_ckpt_callback,
@@ -77,7 +78,7 @@ GYM_OVERRIDES_YAML = "gym_overrides_config.yaml"
 CURRICULUM_YAML = "curriculum_config.yaml"
 RL_YAML = "rl_config.yaml"
 TRANSFER_YAML = "transfer_config.yaml"
-NORM_BOUNDS_YAML = "norm_bounds.yaml"
+DEPLOY_YAML = "deploy.yaml"
 OBS_MIN_MAX_YAML = "obs_min_max.yaml"
 
 
@@ -132,9 +133,9 @@ def train(profile: TrainingProfile):
     curriculum_config = get_curriculum_config()
     save_config(curriculum_config, config_dir, CURRICULUM_YAML)
 
-    norm_bounds = extract_norm_bounds(eval_env)
-    if norm_bounds is not None:
-        save_config(norm_bounds, config_dir, NORM_BOUNDS_YAML)
+    deploy_config = build_deploy_config(eval_env, PARAMS)
+    if deploy_config is not None:
+        save_config(deploy_config, config_dir, DEPLOY_YAML)
 
     callbacks = [
         WandbCallback(gradient_save_freq=0, verbose=2),
@@ -274,9 +275,9 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
     curriculum_config = get_curriculum_config()
     save_config(curriculum_config, config_dir, CURRICULUM_YAML)
 
-    norm_bounds = extract_norm_bounds(eval_env)
-    if norm_bounds is not None:
-        save_config(norm_bounds, config_dir, NORM_BOUNDS_YAML)
+    deploy_config = build_deploy_config(eval_env, PARAMS)
+    if deploy_config is not None:
+        save_config(deploy_config, config_dir, DEPLOY_YAML)
 
     callbacks = [
         WandbCallback(gradient_save_freq=0, verbose=2),
@@ -437,9 +438,9 @@ def transfer_train(
     curriculum_config = get_curriculum_config()
     save_config(curriculum_config, config_dir, CURRICULUM_YAML)
 
-    norm_bounds = extract_norm_bounds(eval_env)
-    if norm_bounds is not None:
-        save_config(norm_bounds, config_dir, NORM_BOUNDS_YAML)
+    deploy_config = build_deploy_config(eval_env, PARAMS)
+    if deploy_config is not None:
+        save_config(deploy_config, config_dir, DEPLOY_YAML)
 
     callbacks = [
         WandbCallback(gradient_save_freq=0, verbose=2),
