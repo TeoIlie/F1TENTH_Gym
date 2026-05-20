@@ -363,20 +363,31 @@ class _StubVecEnv:
         raise AssertionError(f"unexpected get_attr({name!r})")
 
 
+class _StubLogger:
+    """Minimal SB3 Logger stub: captures record() entries and dump() calls."""
+
+    def __init__(self):
+        self.records: dict = {}
+        self.dumps: list[int] = []
+
+    def record(self, key, value, exclude=None):
+        self.records[key] = value
+
+    def dump(self, step=0):
+        self.dumps.append(step)
+
+
 def _make_callback(tmp_path, snapshot, save_freq=100):
     cb = ObsMinMaxSnapshotCallback(snapshot_path=str(tmp_path / "snap.yaml"), save_freq=save_freq)
-    # training_env is a property reading model.get_env(); stub the model.
-    cb.model = SimpleNamespace(get_env=lambda env=_StubVecEnv(snapshot): env)
+    # training_env is a property reading model.get_env(); logger property reads model.logger.
+    cb.model = SimpleNamespace(get_env=lambda env=_StubVecEnv(snapshot): env, logger=_StubLogger())
     cb.num_timesteps = 0
     return cb
 
 
 class TestObsMinMaxSnapshotCallback:
-    def test_snapshot_writes_yaml_and_logs_violations(self, tmp_path, monkeypatch):
+    def test_snapshot_writes_yaml_and_logs_violations(self, tmp_path):
         import yaml as _yaml
-
-        logged = []
-        monkeypatch.setattr("train.callbacks.wandb.log", lambda m, step=None: logged.append((m, step)))
 
         cb = _make_callback(
             tmp_path,
@@ -394,20 +405,16 @@ class TestObsMinMaxSnapshotCallback:
         assert payload["total_steps"] == 42
         assert payload["features"]["f1"] == {"min": -2.0, "max": 5.0}
 
-        assert len(logged) == 1
-        metrics, step = logged[0]
-        assert step == 1234
-        assert metrics["obs_bounds/f1/over"] == 4.0  # 5 - 1
-        assert metrics["obs_bounds/f1/under"] == 1.0  # -1 - (-2)
-        assert not any(k.startswith("obs_bounds/f2/") for k in metrics)
+        records = cb.model.logger.records
+        assert records["obs_bounds/f1/over"] == 4.0  # 5 - 1
+        assert records["obs_bounds/f1/under"] == 1.0  # -1 - (-2)
+        assert not any(k.startswith("obs_bounds/f2/") for k in records)
 
-    def test_snapshot_noop_when_disabled(self, tmp_path, monkeypatch):
-        logged = []
-        monkeypatch.setattr("train.callbacks.wandb.log", lambda m, step=None: logged.append(m))
+    def test_snapshot_noop_when_disabled(self, tmp_path):
         cb = _make_callback(tmp_path, snapshot=None)
         cb._snapshot()
         assert not os.path.exists(cb.snapshot_path)
-        assert logged == []
+        assert cb.model.logger.records == {}
 
     def test_on_step_respects_save_freq(self, tmp_path):
         cb = _make_callback(tmp_path, snapshot=None, save_freq=100)
