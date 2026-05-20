@@ -25,8 +25,10 @@ import unittest
 import numpy as np
 
 from gymkhana.envs.dynamic_models import (
-    vehicle_dynamics_ks,
-    vehicle_dynamics_st,
+    vehicle_dynamics_ks_py as vehicle_dynamics_ks,
+)
+from gymkhana.envs.dynamic_models import (
+    vehicle_dynamics_st_py as vehicle_dynamics_st,
 )
 
 
@@ -656,6 +658,60 @@ class DynamicsTest(unittest.TestCase):
         ]
 
         np.testing.assert_array_almost_equal(x_left_st[-1], x_left_st_gt, decimal=2)
+
+
+class WrapperVsJitCoreEquivalence(unittest.TestCase):
+    """The ``*_py`` wrappers must be transparent: same numerics as calling the
+    jitted core directly with a pre-built ``VehicleParams``. Catches any
+    accidental rescaling/coercion in the dict-entry layer.
+    """
+
+    def _check(self, x, u, params, py_fn, jit_fn):
+        from gymkhana.envs.params import to_named_tuple
+
+        f_py = py_fn(x, u, params)
+        f_jit = jit_fn(x, u, to_named_tuple(params))
+        np.testing.assert_allclose(f_py, f_jit, rtol=0, atol=0)
+
+    def test_ks_equivalence(self):
+        from gymkhana.envs.dynamic_models import vehicle_dynamics_ks_py
+        from gymkhana.envs.dynamic_models.kinematic import vehicle_dynamics_ks
+        from gymkhana.envs.gymkhana_env import GKEnv
+
+        p = GKEnv.f1tenth_vehicle_params()
+        x = np.array([0.0, 0.0, 0.05, 4.0, 0.1])
+        u = np.array([0.1, 1.0])
+        self._check(x, u, p, vehicle_dynamics_ks_py, vehicle_dynamics_ks)
+
+    def test_st_equivalence(self):
+        from gymkhana.envs.dynamic_models import vehicle_dynamics_st_py
+        from gymkhana.envs.dynamic_models.single_track import vehicle_dynamics_st
+        from gymkhana.envs.gymkhana_env import GKEnv
+
+        p = GKEnv.f1tenth_vehicle_params()
+        x = np.array([0.0, 0.0, 0.05, 4.0, 0.1, 0.02, 0.01])
+        u = np.array([0.1, 1.0])
+        self._check(x, u, p, vehicle_dynamics_st_py, vehicle_dynamics_st)
+
+    def test_std_equivalence(self):
+        from gymkhana.envs.dynamic_models import vehicle_dynamics_std_py
+        from gymkhana.envs.dynamic_models.single_track_drift.single_track_drift import vehicle_dynamics_std
+        from gymkhana.envs.gymkhana_env import GKEnv
+
+        p = GKEnv.f1tenth_std_vehicle_params()
+        x = np.array([0.0, 0.0, 0.05, 4.0, 0.1, 0.02, 0.01, 100.0, 100.0])
+        u = np.array([0.1, 1.0])
+        self._check(x, u, p, vehicle_dynamics_std_py, vehicle_dynamics_std)
+
+    def test_stp_equivalence(self):
+        from gymkhana.envs.dynamic_models import vehicle_dynamics_stp_py
+        from gymkhana.envs.dynamic_models.single_track_pacejka.single_track_pacejka import vehicle_dynamics_stp
+        from gymkhana.envs.gymkhana_env import GKEnv
+
+        p = GKEnv.f1tenth_stp_vehicle_params()
+        x = np.array([0.0, 0.0, 0.05, 4.0, 0.1, 0.02, 0.01])
+        u = np.array([0.1, 1.0])
+        self._check(x, u, p, vehicle_dynamics_stp_py, vehicle_dynamics_stp)
 
 
 if __name__ == "__main__":

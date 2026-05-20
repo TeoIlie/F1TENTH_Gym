@@ -1,0 +1,117 @@
+# Full-scale vehicle parameters from CommonRoad (Ford Escort).
+# Copied from commonroad-vehicle-models/PYTHON/vehiclemodels/parameters/parameters_vehicle1.yaml
+
+mu: 1.0489
+C_Sf: 4.718
+C_Sr: 5.4562
+lf: 0.88392
+lr: 1.50876
+h: 0.074
+m: 1225.8878467253344
+I: 1538.8533713561394
+width: 1.674
+length: 4.298
+
+# steering constraints
+s_min: -0.91
+s_max: 0.91
+sv_min: -0.4
+sv_max: 0.4
+# T_steer: 0.025  # Steering actuator time constant (s). Uncomment to enable first-order lag (requires bench ID).
+kappa_dot_max: 0.4
+kappa_dot_dot_max: 20
+
+# longitudinal constraints
+v_switch: 4.755
+a_max: 11.5
+v_min: -13.9
+v_max: 45.8
+j_max: 10000.0
+j_dot_max: 10000.0
+
+# sprung mass [kg]
+m_s: 1094.542720290477
+# unsprung mass front [kg]
+m_uf: 65.67256321742863
+# unsprung mass rear [kg]
+m_ur: 65.67256321742863
+
+# moments of inertia of sprung mass
+I_Phi_s: 244.04723069965206
+I_y_s: 1342.2597688480864
+I_z: 1538.8533713561394
+I_xz_s: 0.0
+
+# suspension parameters
+K_sf: 21898.332429625985
+K_sdf: 1459.3902937206362
+K_sr: 21898.332429625985
+K_sdr: 1459.3902937206362
+
+# geometric parameters
+T_f: 1.389888
+T_r: 1.423416
+K_ras: 175186.65943700788
+K_tsf: -12880.270509148304
+K_tsr: 0.0
+K_rad: 10215.732056044453
+K_zt: 189785.5477234252
+
+h_cg: 0.5577840000000001
+h_raf: 0.0
+h_rar: 0.0
+h_s: 0.59436
+
+I_uf: 32.53963075995361
+I_ur: 32.53963075995361
+I_y_w: 1.7
+
+K_lt: 1.0278264878518764e-05
+R_w: 0.344
+
+# split of brake and engine torque
+T_sb: 0.76
+T_se: 1
+
+# suspension camber parameters
+D_f: -0.6233595800524934
+D_r: -0.20997375328083986
+E_f: 0
+E_r: 0
+
+# tire parameters from ADAMS handbook
+# longitudinal coefficients
+tire_p_cx1: 1.6411
+tire_p_dx1: 1.1739
+tire_p_dx3: 0
+tire_p_ex1: 0.46403
+tire_p_kx1: 22.303
+tire_p_hx1: 0.0012297
+tire_p_vx1: -8.8098e-06
+tire_r_bx1: 13.276
+tire_r_bx2: -13.778
+tire_r_cx1: 1.2568
+tire_r_ex1: 0.65225
+tire_r_hx1: 0.0050722
+
+# lateral coefficients
+tire_p_cy1: 1.3507
+tire_p_dy1: 1.0489
+tire_p_dy3: -2.8821
+tire_p_ey1: -0.0074722
+tire_p_ky1: -21.92
+tire_p_hy1: 0.0026747
+tire_p_hy3: 0.031415
+tire_p_vy1: 0.037318
+tire_p_vy3: -0.32931
+tire_r_by1: 7.1433
+tire_r_by2: 9.1916
+tire_r_by3: -0.027856
+tire_r_cy1: 1.0719
+tire_r_ey1: -0.27572
+tire_r_hy1: 5.7448e-06
+tire_r_vy1: -0.027825
+tire_r_vy3: -0.27568
+tire_r_vy4: 12.12
+tire_r_vy5: 1.9
+tire_r_vy6: -10.704

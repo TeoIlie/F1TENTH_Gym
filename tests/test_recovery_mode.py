@@ -35,7 +35,7 @@ class TestRecoveryConfig(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
@@ -61,7 +61,6 @@ class TestRecoveryConfig(unittest.TestCase):
         self.assertIsInstance(self.uw.recovery_yaw_range, list)
 
         # reward gains
-        self.assertEqual(self.uw.recovery_euclid_gain, 1.0)
         self.assertEqual(self.uw.recovery_timestep_penalty, 1.0)
         self.assertEqual(self.uw.recovery_success_reward, 100)
         self.assertEqual(self.uw.recovery_collision_penalty, -50)
@@ -98,7 +97,7 @@ class TestRecoveryReset(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
@@ -152,7 +151,7 @@ class TestRecoverySuccess(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
@@ -187,18 +186,14 @@ class TestRecoveryReward(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_recovery_env()
-        self.env.reset()
+        self.env.reset(seed=0)  # deterministic recovery perturbations
         self.uw = self.env.unwrapped
 
     def tearDown(self):
         self.env.close()
 
     def test_recovery_reward_components(self):
-        """Verify euclidean, collision, success, and timestep penalty components."""
-        agent = self.uw.sim.agents[0]
-        std = agent.standard_state
-        beta = std["slip"]
-        r = std["yaw_rate"]
+        """Verify collision, success, and timestep penalty components."""
         dt = self.uw.timestep
 
         # Case 1: normal step (no collision, no success)
@@ -206,7 +201,7 @@ class TestRecoveryReward(unittest.TestCase):
         self.uw.recovery_succeeded = False
         reward = self.uw._get_reward()
 
-        expected = -self.uw.recovery_euclid_gain * np.sqrt(beta**2 + r**2) - self.uw.recovery_timestep_penalty * dt
+        expected = -self.uw.recovery_timestep_penalty * dt
         self.assertAlmostEqual(reward, expected, places=6, msg="Normal step reward mismatch")
 
         # Case 2: boundary crash
@@ -243,16 +238,10 @@ class TestRecoveryReward(unittest.TestCase):
 
         # Case 3: arc-length exceeded -> truncated
         with patch.object(self.uw, "_check_recovery_success", return_value=False):
-            # Mock position far past recovery_s_max
-            self.uw.poses_x = [0.0]
-            self.uw.poses_y = [0.0]
-            original_calc = self.uw.track.centerline.spline.calc_arclength_inaccurate
-            self.uw.track.centerline.spline.calc_arclength_inaccurate = lambda x, y: (
-                self.uw.recovery_s_max + 10,
-                0,
-            )
+            original_cache_s = self.uw._frenet_cache[0, 0]
+            self.uw._frenet_cache[0, 0] = self.uw.recovery_s_max + 10
             terminated, truncated, _ = self.uw._check_done()
-            self.uw.track.centerline.spline.calc_arclength_inaccurate = original_calc
+            self.uw._frenet_cache[0, 0] = original_cache_s
         self.assertFalse(terminated, "Arc-length exceed should not terminate")
         self.assertTrue(truncated, "Arc-length exceed should truncate")
 

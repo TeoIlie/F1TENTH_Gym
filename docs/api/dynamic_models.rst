@@ -1,7 +1,7 @@
 Dynamic Models
 ==============
 
-Gym-Khana provides four vehicle dynamics models of increasing complexity. All use numba JIT compilation for real-time performance.
+Gym-Khana provides five vehicle dynamics models of increasing complexity. All use numba JIT compilation for real-time performance.
 
 Source: ``gymkhana/envs/dynamic_models/``
 
@@ -19,12 +19,24 @@ ST — Single Track
 
 Single-track dynamics model with basic tire modeling. Models lateral dynamics but without an explicit tire force model.
 
-MB — Multi-Body
-----------------
+STP — Single Track Pacejka
+---------------------------
 
-``gymkhana/envs/dynamic_models/multi_body/``
+``gymkhana/envs/dynamic_models/single_track_pacejka/``
 
-Most detailed model with full tire modeling and multi-body dynamics. Provides the highest fidelity but parameters are only available for a full-scale vehicle (not 1/10 scale).
+Dynamic single-track bicycle with a **lateral-only** Pacejka Magic Formula tire model (no longitudinal slip dynamics). Ported from the ForzaETH `f110-simulator <https://github.com/ForzaETH/f1tenth_simulator>`_ (``STDKinematics::update_pacejka``) and adjusted for this simulator. Shares ST's 7-element state layout, so it slots in wherever ST is used.
+
+Use with:
+
+.. code:: python
+
+   config = {
+       'model': 'stp',
+       'control_input': ['accl', 'steering_angle'],
+       'params': GKEnv.f1tenth_stp_vehicle_params(),
+   }
+
+The ``drift_st`` observation type is supported on both the ``st`` and ``stp`` models.
 
 STD — Single Track Drift
 -------------------------
@@ -42,6 +54,13 @@ Use with:
        'control_input': ['accl', 'steering_angle'],
        'params': GKEnv.f1tenth_std_vehicle_params(),
    }
+
+MB — Multi-Body
+----------------
+
+``gymkhana/envs/dynamic_models/multi_body/``
+
+Most detailed model with full tire modeling and multi-body dynamics. Provides the highest fidelity but parameters are only available for a full-scale vehicle (not 1/10 scale).
 
 Vehicle parameters
 ------------------
@@ -74,10 +93,14 @@ API reference
    :members:
    :undoc-members:
 
-.. automodule:: gymkhana.envs.dynamic_models.multi_body.multi_body
+.. automodule:: gymkhana.envs.dynamic_models.single_track_pacejka.single_track_pacejka
    :members:
    :undoc-members:
 
 .. automodule:: gymkhana.envs.dynamic_models.single_track_drift.single_track_drift
+   :members:
+   :undoc-members:
+
+.. automodule:: gymkhana.envs.dynamic_models.multi_body.multi_body
    :members:
    :undoc-members:

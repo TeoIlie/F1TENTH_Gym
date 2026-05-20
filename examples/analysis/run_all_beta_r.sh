@@ -6,7 +6,10 @@ cd "$(dirname "$0")/../.."
 SCRIPT="python examples/analysis/beta_r_avg_plot.py"
 
 # Stanley baseline (generates recovery states for learned controller comparison)
-# $SCRIPT --controller_type stanley --desc "stanley"
+$SCRIPT --controller_type stanley --desc "stanley"
+
+# STMPC baseline
+$SCRIPT --controller_type --desc "Single-track MPC controller with acados + CasAdi, ported from ForzaETH"
 
 # Drift models
 # $SCRIPT --controller_type learned --learned_type drift --run_id 178a1a5l --desc "drift model - CW & CCW on Drift_large, with sparse_width_obs = True"

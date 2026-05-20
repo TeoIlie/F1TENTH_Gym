@@ -8,7 +8,6 @@ import numpy as np
 import pyqtgraph as pg
 from PIL import ImageColor
 from PyQt6 import QtCore, QtGui, QtWidgets
-from pyqtgraph.exporters import ImageExporter
 
 from ..track import Track
 from .pyqt_objects import (
@@ -19,6 +18,221 @@ from .renderer import EnvRenderer, RenderSpec
 
 # one-line instructions visualized at the top of the screen (if show_info=True)
 INSTRUCTION_TEXT = "Mouse click (L/M/R): Change POV - 'S' key: On/Off"
+
+# control debug panel constants
+_DEBUG_PANEL_HEIGHT = 140
+_DEBUG_BG_COLOR = QtGui.QColor(26, 26, 26)
+_DEBUG_BAR_OUTLINE_COLOR = QtGui.QColor(80, 80, 80)
+_DEBUG_ZERO_COLOR = QtGui.QColor(200, 200, 200)
+_DEBUG_STEER_COLOR = QtGui.QColor(80, 140, 255)
+_DEBUG_THROTTLE_COLOR = QtGui.QColor(80, 200, 120)
+
+# observation debug overlay constants
+_OBS_OVERLAY_MARGIN_X = 10
+_OBS_OVERLAY_MARGIN_TOP = 45
+_OBS_OVERLAY_FONT_SIZE = 10
+_OBS_ARRAY_SMALL_THRESHOLD = 15
+
+
+class ControlDebugPanel(QtWidgets.QWidget):
+    """Widget that draws control command text and zero-centered bar gauges."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(_DEBUG_PANEL_HEIGHT)
+        self._state = None
+        self._font = QtGui.QFont("Monospace", 11)
+        self._font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+
+    def update_state(self, state: dict, agent_idx: int | None, ego_idx: int) -> None:
+        idx = agent_idx if agent_idx is not None else ego_idx
+        self._state = {
+            "steer_cmd": float(state["steering_cmds"][idx]),
+            "throttle_cmd": float(state["throttle_cmds"][idx]),
+            "v_x": float(state["v_x"][idx]),
+            "delta": float(state["delta"][idx]),
+            "steer_bounds": state["steer_bounds"],
+            "throttle_bounds": state["throttle_bounds"],
+            "steer_type": state["steer_type"],
+            "throttle_type": state["throttle_type"],
+            "delta_bounds": state["delta_bounds"],
+            "vx_bounds": state["vx_bounds"],
+        }
+        self.update()  # schedule repaint
+
+    def paintEvent(self, event):
+        if self._state is None:
+            return
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), _DEBUG_BG_COLOR)
+
+        # draw 1px separator at top
+        p.setPen(QtGui.QPen(_DEBUG_BAR_OUTLINE_COLOR, 1))
+        p.drawLine(0, 0, self.width(), 0)
+
+        p.setFont(self._font)
+        fm = p.fontMetrics()
+        lh = fm.height() + 2  # line height
+        margin = 12
+        s = self._state
+
+        # Row 1: actual state in white — delta left-aligned, v_x right-aligned
+        y = margin + fm.ascent()
+        delta_text = f"delta = {s['delta']:+.4f} rad  [{s['delta_bounds'][0]:.2f}, {s['delta_bounds'][1]:.2f}]"
+        vx_text = f"v_x = {s['v_x']:+.3f} m/s  [{s['vx_bounds'][0]:.2f}, {s['vx_bounds'][1]:.2f}]"
+        p.setPen(QtGui.QColor(255, 255, 255))
+        p.drawText(margin, y, delta_text)
+        p.drawText(self.width() - margin - fm.horizontalAdvance(vx_text), y, vx_text)
+
+        # Row 2: command text — steer left-aligned in steer color, throttle right-aligned in throttle color
+        y += lh
+        steer_text = (
+            f"{s['steer_type']} cmd: {s['steer_cmd']:+.3f}  [{s['steer_bounds'][0]:.2f}, {s['steer_bounds'][1]:.2f}]"
+        )
+        throttle_text = f"{s['throttle_type']} cmd: {s['throttle_cmd']:+.3f}  [{s['throttle_bounds'][0]:.2f}, {s['throttle_bounds'][1]:.2f}]"
+        p.setPen(_DEBUG_STEER_COLOR)
+        p.drawText(margin, y, steer_text)
+        p.setPen(_DEBUG_THROTTLE_COLOR)
+        p.drawText(self.width() - margin - fm.horizontalAdvance(throttle_text), y, throttle_text)
+
+        # Row 3-4: bars (no text labels — colour matches the text above)
+        min_label_w = fm.horizontalAdvance("-00.00 ") + 4
+        bar_x = margin + min_label_w
+        bar_w = self.width() - 2 * (margin + min_label_w)
+        bar_h = 16
+        y_bar = y + lh
+
+        self._draw_bar(p, fm, s["steer_cmd"], s["steer_bounds"], _DEBUG_STEER_COLOR, bar_x, bar_w, bar_h, y_bar)
+        y_bar += bar_h + 10
+        self._draw_bar(
+            p, fm, s["throttle_cmd"], s["throttle_bounds"], _DEBUG_THROTTLE_COLOR, bar_x, bar_w, bar_h, y_bar
+        )
+
+        p.end()
+
+    def _draw_bar(
+        self,
+        p: QtGui.QPainter,
+        fm,
+        value: float,
+        bounds: tuple,
+        color: QtGui.QColor,
+        bar_x: int,
+        bar_w: int,
+        bar_h: int,
+        y: int,
+    ):
+        lo, hi = bounds
+        rng = hi - lo
+        if rng <= 0:
+            return
+
+        # outline
+        p.setPen(QtGui.QPen(_DEBUG_BAR_OUTLINE_COLOR, 1))
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.drawRect(bar_x, y, bar_w, bar_h)
+
+        zero_x = bar_x + int((0.0 - lo) / rng * bar_w)
+        val_x = bar_x + int((max(lo, min(hi, value)) - lo) / rng * bar_w)
+
+        # fill from zero to value
+        fill_left, fill_right = min(zero_x, val_x), max(zero_x, val_x)
+        if fill_right > fill_left:
+            p.fillRect(fill_left, y + 1, fill_right - fill_left, bar_h - 1, color)
+
+        # zero tick
+        p.setPen(QtGui.QPen(_DEBUG_ZERO_COLOR, 2))
+        p.drawLine(zero_x, y - 2, zero_x, y + bar_h + 2)
+
+        # min/max labels
+        p.drawText(bar_x - fm.horizontalAdvance(f"{lo:.2f}") - 2, y + fm.ascent(), f"{lo:.2f}")
+        p.drawText(bar_x + bar_w + 4, y + fm.ascent(), f"{hi:.2f}")
+
+        # value marker
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+        p.drawLine(val_x, y, val_x, y + bar_h)
+
+
+class ObsDebugOverlay(QtWidgets.QWidget):
+    """Widget that overlays observation key-value text on top of the map."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
+        self._lines: list[str] = []
+        self._font = QtGui.QFont("Monospace", _OBS_OVERLAY_FONT_SIZE)
+        self._font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+
+    def update_state(self, state: dict, agent_idx: int | None, ego_idx: int) -> None:
+        get_features = state.get("obs_debug_getter")
+        if get_features is None:
+            self._lines = ["[no observation data]"]
+            self.update()
+            return
+
+        normalize = state.get("obs_debug_normalize", False)
+        idx = agent_idx if agent_idx is not None else ego_idx
+
+        lines = [f"[norm: {'on' if normalize else 'off'}]"]
+
+        agent_features = get_features(idx)
+        for key, value in agent_features.items():
+            lines.extend(self._format_feature(key, value))
+
+        self._lines = lines
+        self.update()
+
+    def _format_feature(self, key: str, value) -> list[str]:
+        if isinstance(value, np.ndarray):
+            if value.size > _OBS_ARRAY_SMALL_THRESHOLD:
+                return [f"{key}: [{value.size}] min={value.min():.3f} max={value.max():.3f} mean={value.mean():.3f}"]
+            elif value.size > 1:
+                formatted = ", ".join(f"{v:.3f}" for v in value.flat)
+                return [f"{key}: [{formatted}]"]
+            else:
+                return [f"{key}: {float(value):.4f}"]
+        elif isinstance(value, (int, np.integer)):
+            return [f"{key}: {value}"]
+        elif isinstance(value, (float, np.floating)):
+            return [f"{key}: {value:.4f}"]
+        else:
+            return [f"{key}: {value}"]
+
+    def paintEvent(self, event):
+        if not self._lines:
+            return
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+        p.setFont(self._font)
+        fm = p.fontMetrics()
+        lh = fm.height() + 2
+        pad = 6
+
+        # compute bounding rect for all lines
+        max_width = max(fm.horizontalAdvance(line) for line in self._lines)
+        total_height = lh * len(self._lines)
+        bg_rect = QtCore.QRect(
+            _OBS_OVERLAY_MARGIN_X - pad,
+            _OBS_OVERLAY_MARGIN_TOP - pad,
+            max_width + 2 * pad,
+            total_height + 2 * pad,
+        )
+
+        # semi-transparent dark background
+        p.fillRect(bg_rect, QtGui.QColor(0, 0, 0, 150))
+
+        # white text
+        p.setPen(QtGui.QColor(255, 255, 255))
+        x = _OBS_OVERLAY_MARGIN_X
+        y = _OBS_OVERLAY_MARGIN_TOP + fm.ascent()
+        for line in self._lines:
+            p.drawText(x, y, line)
+            y += lh
+
+        p.end()
 
 
 # Replicated from pyqtgraphs' example utils for ci pipelines to pass
@@ -97,10 +311,32 @@ class PyQtEnvRenderer(EnvRenderer):
 
         # create the canvas
         self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        self.window = pg.GraphicsLayoutWidget()
+
+        self.debug_panel = None
+        self.obs_overlay = None
+        self._plot_widget = pg.GraphicsLayoutWidget()
+        ws = self.render_spec.window_size
+
+        if self.render_spec.show_ctr_debug:
+            self.window = QtWidgets.QWidget()
+            layout = QtWidgets.QVBoxLayout(self.window)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(self._plot_widget)
+            self.debug_panel = ControlDebugPanel()
+            layout.addWidget(self.debug_panel)
+            self.window.setGeometry(0, 0, ws, ws + _DEBUG_PANEL_HEIGHT)
+        else:
+            self.window = self._plot_widget
+            self.window.setGeometry(0, 0, ws, ws)
+
+        if self.render_spec.show_obs_debug:
+            self.obs_overlay = ObsDebugOverlay(parent=self._plot_widget)
+            self.obs_overlay.setGeometry(0, 0, ws, ws)
+            self.obs_overlay.raise_()
+
         self.window.setWindowTitle("F1Tenth Gym")
-        self.window.setGeometry(0, 0, self.render_spec.window_size, self.render_spec.window_size)
-        self.canvas: pg.PlotItem = self.window.addPlot()
+        self.canvas: pg.PlotItem = self._plot_widget.addPlot()
 
         # Disable interactivity
         self.canvas.setMouseEnabled(x=False, y=False)  # Disable mouse panning & zooming
@@ -112,15 +348,18 @@ class PyQtEnvRenderer(EnvRenderer):
         legend.mouseDragEvent = lambda *args, **kwargs: None
         legend.hoverEvent = lambda *args, **kwargs: None
         # self.scene() is a pyqtgraph.GraphicsScene.GraphicsScene.GraphicsScene
-        self.window.scene().sigMouseClicked.connect(self.mouse_clicked)
+        self._plot_widget.scene().sigMouseClicked.connect(self.mouse_clicked)
         self.window.keyPressEvent = self.key_pressed
 
         # Remove axes
         self.canvas.hideAxis("bottom")
         self.canvas.hideAxis("left")
 
-        # setting plot window background color to yellow
-        self.window.setBackground("w")
+        # Lock aspect ratio so the map is not skewed when debug panel is shown
+        self.canvas.setAspectLocked(True)
+
+        # setting plot window background color to white
+        self._plot_widget.setBackground("w")
 
         # fps and time renderer
         self.clock = FrameCounter()
@@ -179,7 +418,7 @@ class PyQtEnvRenderer(EnvRenderer):
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             self.window.show()
         elif self.render_mode == "rgb_array":
-            self.exporter = ImageExporter(self.canvas)
+            pass  # rgb_array captured via QWidget.grab() in render()
 
     def update(self, state: dict) -> None:
         """
@@ -209,6 +448,14 @@ class PyQtEnvRenderer(EnvRenderer):
 
         # update time
         self.sim_time = state["sim_time"]
+
+        # update debug panel
+        if self.debug_panel is not None and "steering_cmds" in state:
+            self.debug_panel.update_state(state, self.agent_to_follow, state.get("ego_idx", 0))
+
+        # update observation overlay
+        if self.obs_overlay is not None and "obs_debug_getter" in state:
+            self.obs_overlay.update_state(state, self.agent_to_follow, state.get("ego_idx", 0))
 
     def add_renderer_callback(self, callback_fn: Callable[[EnvRenderer], None]) -> None:
         """
@@ -306,21 +553,26 @@ class PyQtEnvRenderer(EnvRenderer):
 
         self.time_renderer.render(text=f"{self.sim_time:.2f}")
         self.clock.update()
+
+        if self.obs_overlay is not None:
+            self.obs_overlay.setGeometry(0, 0, self._plot_widget.width(), self._plot_widget.height())
+
         self.app.processEvents()
 
         if self.render_mode in ["human", "human_fast"]:
             assert self.window is not None
 
         else:
-            # rgb_array mode => extract the frame from the canvas
-            qImage = self.exporter.export(toBytes=True)
+            # rgb_array mode => grab the whole window so debug widgets are included
+            pixmap = self.window.grab()
+            qImage = pixmap.toImage().convertToFormat(QtGui.QImage.Format.Format_RGBA8888)
 
             width = qImage.width()
             height = qImage.height()
 
             ptr = qImage.bits()
             ptr.setsize(height * width * 4)
-            frame = np.array(ptr).reshape(height, width, 4)  #  Copies the data
+            frame = np.array(ptr).reshape(height, width, 4)  # Copies the data
 
             return frame[:, :, :3]  # remove alpha channel
 

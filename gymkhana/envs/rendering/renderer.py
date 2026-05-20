@@ -17,6 +17,8 @@ class RenderSpec:
     car_tickness: int
     show_wheels: bool
     show_info: Optional[bool] = True
+    show_ctr_debug: Optional[bool] = False
+    show_obs_debug: Optional[bool] = False
     vehicle_palette: Optional[list[str]] = None
     render_type: Optional[str] = "pygame"
 
@@ -28,6 +30,8 @@ class RenderSpec:
         car_tickness: int = 1,
         show_wheels: bool = False,
         show_info: bool = True,
+        show_ctr_debug: bool = False,
+        show_obs_debug: bool = False,
         vehicle_palette: list[str] = None,
         render_type: str = "pygame",
     ) -> None:
@@ -57,18 +61,22 @@ class RenderSpec:
         self.car_tickness = car_tickness
         self.show_wheels = show_wheels
         self.show_info = show_info
+        self.show_ctr_debug = show_ctr_debug
+        self.show_obs_debug = show_obs_debug
         self.vehicle_palette = vehicle_palette or ["#984ea3"]
         self.render_type = render_type
 
     @staticmethod
-    def from_yaml(yaml_file: str | pathlib.Path):
+    def from_yaml(yaml_file: str | pathlib.Path, overrides: Optional[dict] = None):
         """
-        Load rendering specification from a yaml file.
+        Load rendering specification from a yaml file, optionally overriding fields.
 
         Parameters
         ----------
         yaml_file : str | pathlib.Path
             path to the yaml file
+        overrides : dict, optional
+            dict of field values that take precedence over the yaml contents
 
         Returns
         -------
@@ -79,7 +87,9 @@ class RenderSpec:
             try:
                 config = yaml.safe_load(yaml_stream)
             except yaml.YAMLError as ex:
-                print(ex)
+                raise ValueError(f"Failed to parse render config YAML at {yaml_file}: {ex}") from ex
+        if overrides:
+            config.update(overrides)
         return RenderSpec(**config)
 
 

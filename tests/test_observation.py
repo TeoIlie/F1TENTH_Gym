@@ -151,6 +151,7 @@ class TestObservationInterface(unittest.TestCase):
             "pose_y",
             "pose_theta",
             "linear_vel_x",
+            "linear_vel_y",
             "ang_vel_z",
             "delta",
             "beta",
@@ -167,7 +168,15 @@ class TestObservationInterface(unittest.TestCase):
         obs, _, _, _, _ = env.step(env.action_space.sample())
 
         for i, agent_id in enumerate(env.unwrapped.agent_ids):
-            pose_x, pose_y, delta, velx, pose_theta, _, beta = env.unwrapped.sim.agents[i].state
+            std_state = env.unwrapped.sim.agents[i].standard_state
+            pose_x = std_state["x"]
+            pose_y = std_state["y"]
+            pose_theta = std_state["yaw"]
+            velx = std_state["v_x"]
+            vely = std_state["v_y"]
+            delta = std_state["delta"]
+            ang_vel_z = std_state["yaw_rate"]
+            beta = std_state["slip"]
 
             agent_obs = obs[agent_id]
             obs_x, obs_y, obs_theta = (
@@ -175,15 +184,17 @@ class TestObservationInterface(unittest.TestCase):
                 agent_obs["pose_y"],
                 agent_obs["pose_theta"],
             )
-            obs_velx, obs_delta, obs_beta = (
+            obs_velx, obs_vely, obs_delta, obs_beta, obs_ang_vel_z = (
                 agent_obs["linear_vel_x"],
+                agent_obs["linear_vel_y"],
                 agent_obs["delta"],
                 agent_obs["beta"],
+                agent_obs["ang_vel_z"],
             )
 
             for ground_truth, observed in zip(
-                [pose_x, pose_y, pose_theta, velx, delta, beta],
-                [obs_x, obs_y, obs_theta, obs_velx, obs_delta, obs_beta],
+                [pose_x, pose_y, pose_theta, velx, vely, delta, beta, ang_vel_z],
+                [obs_x, obs_y, obs_theta, obs_velx, obs_vely, obs_delta, obs_beta, obs_ang_vel_z],
             ):
                 self.assertTrue(np.allclose(ground_truth, observed))
 
@@ -227,6 +238,10 @@ class TestDriftObservation(unittest.TestCase):
         # Ensure normalization is off for easier testing
         cls.config["normalize_obs"] = False
         cls.config["sparse_width_obs"] = False
+        # Pin to "drift"; yaml default may differ (e.g. drift_real) and break feature indexing.
+        # "drift" obs requires "accl" longitudinal control (see observation.py:680).
+        cls.config["observation_config"] = {"type": "drift"}
+        cls.config["control_input"] = ["accl", "steering_angle"]
         cls.lookahead_n_points = cls.config["lookahead_n_points"]
         cls.lookahead_ds = cls.config["lookahead_ds"]
 
@@ -253,9 +268,9 @@ class TestDriftObservation(unittest.TestCase):
             + 1  # beta
             + 1  # delta
             + 1  # prev_steering_cmd
-            + 1  # prev_accl_cmd
+            + 1  # prev_throttle_cmd
             + 1  # prev_avg_wheel_omega
-            + 1  # curr_vel_cmd
+            + 1  # integrated_vel_cmd
             + self.lookahead_n_points  # lookahead_curvatures
             + self.lookahead_n_points  # lookahead_widths
         )
@@ -421,37 +436,29 @@ class TestDriftObservation(unittest.TestCase):
             msg=f"prev_steering_cmd should be {first_steering}, got {observed_prev_steer}",
         )
 
-    def test_prev_accl_cmd(self):
-        """Test that prev_accl_cmd holds acceleration command from previous time step"""
+    def test_prev_throttle_cmd(self):
+        """Test that prev_throttle_cmd holds the raw throttle command from the previous step."""
         obs, _ = self.env.reset()
 
-        # First action with specific acceleration
-        first_accl = 0.3
-        action1 = np.array([[0.0, first_accl]])
+        # First action with specific throttle value
+        first_throttle = 0.3
+        action1 = np.array([[0.0, first_throttle]])
         obs1, _, _, _, _ = self.env.step(action1)
 
-        # Second action with different acceleration
-        second_accl = 0.6
-        action2 = np.array([[0.0, second_accl]])
+        # Second action with different throttle
+        second_throttle = 0.6
+        action2 = np.array([[0.0, second_throttle]])
         obs2, _, _, _, _ = self.env.step(action2)
 
-        # After second step, prev_accl_cmd should hold the actual acceleration from first step
-        # Get the actual acceleration that was applied in first step
-        agent = self.env.unwrapped.sim.agents[0]
+        # prev_throttle_cmd is the raw value, no conversion. Index 8 in the drift feature list.
+        observed_prev_throttle = obs2[8]
 
-        # The prev_accl_cmd at step 2 should be curr_accl_cmd from step 1
-        # Extract from observation (eighth element)
-        observed_prev_accl = obs2[7]
-
-        # We can't directly get the first step's accl, but we can verify it's not zero
-        # and verify the temporal shift works by doing another step
-        action3 = np.array([[0.0, 0.9]])
-        obs3, _, _, _, _ = self.env.step(action3)
-        observed_prev_accl_step3 = obs3[7]
-
-        # prev_accl at step 3 should not equal prev_accl at step 2 (unless accl happened to be same)
-        # This verifies temporal shifting is happening
-        self.assertIsInstance(observed_prev_accl, (float, np.floating), "prev_accl_cmd should be a float")
+        self.assertAlmostEqual(
+            observed_prev_throttle,
+            first_throttle,
+            places=5,
+            msg=f"prev_throttle_cmd should be {first_throttle}, got {observed_prev_throttle}",
+        )
 
     def test_prev_avg_wheel_omega(self):
         """Test that prev_avg_wheel_omega holds average wheel speed from previous time step"""
@@ -481,26 +488,33 @@ class TestDriftObservation(unittest.TestCase):
             msg=f"prev_avg_wheel_omega should be {curr_avg}, got {observed_prev_omega}",
         )
 
-    def test_curr_vel_cmd(self):
-        """Test that curr_vel_cmd holds integrated velocity command"""
+    def _accl_from_raw_throttle(self, raw_throttle):
+        """Mirror AcclAction.act() to recompute the physical acceleration applied this step."""
+        params = self.env.unwrapped.sim.agents[0].params
+        if self.env.unwrapped.normalize_act:
+            return raw_throttle * params["a_max"]
+        return raw_throttle
+
+    def test_integrated_vel_cmd(self):
+        """Test that integrated_vel_cmd holds integrated velocity command"""
         obs, _ = self.env.reset()
 
         # Get initial velocity command
         agent = self.env.unwrapped.sim.agents[0]
-        initial_vel_cmd = agent.curr_vel_cmd
+        initial_vel_cmd = agent.integrated_vel_cmd
 
         # Step with constant acceleration
         accl = 0.4
         action = np.array([[0.0, accl]])
         obs, _, _, _, _ = self.env.step(action)
 
-        # Get actual acceleration applied (after constraints)
-        actual_accl = agent.curr_accl_cmd
+        # Recompute the actual acceleration applied from the raw throttle (mirrors AcclAction.act)
+        actual_accl = self._accl_from_raw_throttle(accl)
         timestep = self.env.unwrapped.timestep
 
         # Expected velocity command after integration
         expected_vel_cmd = initial_vel_cmd + actual_accl * timestep
-        # Apply clipping as done in base_classes.py line 368
+        # Apply clipping as done in base_classes.py
         v_min = agent.params["v_min"]
         v_max = agent.params["v_max"]
         expected_vel_cmd = np.clip(expected_vel_cmd, v_min, v_max)
@@ -512,16 +526,16 @@ class TestDriftObservation(unittest.TestCase):
             observed_vel_cmd,
             expected_vel_cmd,
             places=4,
-            msg=f"curr_vel_cmd mismatch: expected {expected_vel_cmd}, got {observed_vel_cmd}",
+            msg=f"integrated_vel_cmd mismatch: expected {expected_vel_cmd}, got {observed_vel_cmd}",
         )
 
-    def test_curr_vel_cmd_multi_step_integration(self):
-        """Test that curr_vel_cmd correctly integrates over multiple time steps"""
+    def test_integrated_vel_cmd_multi_step_integration(self):
+        """Test that integrated_vel_cmd correctly integrates over multiple time steps"""
         obs, _ = self.env.reset()
 
         # Get initial velocity command
         agent = self.env.unwrapped.sim.agents[0]
-        initial_vel_cmd = agent.curr_vel_cmd
+        initial_vel_cmd = agent.integrated_vel_cmd
 
         # Step twice with known acceleration
         accl = 0.3
@@ -532,12 +546,12 @@ class TestDriftObservation(unittest.TestCase):
 
         # First step
         obs1, _, _, _, _ = self.env.step(action)
-        actual_accl_1 = agent.curr_accl_cmd
+        actual_accl_1 = self._accl_from_raw_throttle(accl)
         expected_vel_cmd_1 = np.clip(initial_vel_cmd + actual_accl_1 * timestep, v_min, v_max)
 
         # Second step
         obs2, _, _, _, _ = self.env.step(action)
-        actual_accl_2 = agent.curr_accl_cmd
+        actual_accl_2 = self._accl_from_raw_throttle(accl)
         expected_vel_cmd_2 = np.clip(expected_vel_cmd_1 + actual_accl_2 * timestep, v_min, v_max)
 
         # Extract from observation
@@ -547,7 +561,7 @@ class TestDriftObservation(unittest.TestCase):
             observed_vel_cmd,
             expected_vel_cmd_2,
             places=4,
-            msg=f"curr_vel_cmd after 2 steps: expected {expected_vel_cmd_2}, got {observed_vel_cmd}",
+            msg=f"integrated_vel_cmd after 2 steps: expected {expected_vel_cmd_2}, got {observed_vel_cmd}",
         )
 
     def test_lookahead_curvatures(self):
@@ -686,3 +700,60 @@ class TestDriftObservation(unittest.TestCase):
         # Verify temporal shift
         self.assertAlmostEqual(prev_steer_2, curr_steer_1, places=5, msg="Steering command not shifted correctly")
         self.assertAlmostEqual(prev_omega_2, curr_omega_1, places=5, msg="Wheel omega not shifted correctly")
+
+
+class TestIntegratedVelCmdGuard(unittest.TestCase):
+    """integrated_vel_cmd must raise under speed control and construct under accl."""
+
+    def _make_env(self, control_input):
+        config = get_drift_train_config()
+        config["normalize_obs"] = False
+        config["sparse_width_obs"] = False
+        config["control_input"] = control_input
+        config["observation_config"] = {"type": "drift"}
+        return gym.make(get_env_id(), config=config)
+
+    def test_raises_under_speed_mode(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._make_env(["speed", "steering_angle"])
+        msg = str(ctx.exception)
+        self.assertIn("integrated_vel_cmd", msg)
+        self.assertIn("speed", msg)
+
+    def test_constructs_under_accl_mode(self):
+        env = self._make_env(["accl", "steering_angle"])
+        try:
+            env.reset()
+        finally:
+            env.close()
+
+
+class TestCurrCmdOptInFeatures(unittest.TestCase):
+    """curr_steering_cmd / curr_throttle_cmd are opt-in obs features (no default obs type uses
+    them). Verify the obs_size_dict + agent_obs wiring works end-to-end via direct
+    VectorObservation construction."""
+
+    def _make_env(self):
+        config = get_drift_train_config()
+        config["normalize_obs"] = False
+        config["sparse_width_obs"] = False
+        config["control_input"] = ["accl", "steering_angle"]
+        config["observation_config"] = {"type": "frenet"}  # build env without drift constraints
+        return gym.make(get_env_id(), config=config)
+
+    def test_curr_cmd_features_reflect_current_step_action(self):
+        from gymkhana.envs.observation import VectorObservation
+
+        env = self._make_env()
+        try:
+            env.reset()
+            vec = VectorObservation(env.unwrapped, features=["curr_steering_cmd", "curr_throttle_cmd"])
+
+            steer_cmd, throttle_cmd = 0.4, 0.7
+            env.step(np.array([[steer_cmd, throttle_cmd]], dtype=np.float32))
+            obs = vec.observe()
+            self.assertEqual(obs.shape, (2,), f"Expected shape (2,), got {obs.shape}")
+            self.assertAlmostEqual(obs[0], steer_cmd, places=5, msg="curr_steering_cmd mismatch")
+            self.assertAlmostEqual(obs[1], throttle_cmd, places=5, msg="curr_throttle_cmd mismatch")
+        finally:
+            env.close()

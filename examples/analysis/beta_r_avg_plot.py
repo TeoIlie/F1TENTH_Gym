@@ -49,9 +49,29 @@ from train.train_utils import get_output_dirs, print_header
 
 CONTROLLER_TYPE = "learned"
 
-LEARNED_TYPE = "transfer"
-RUN_ID = "c76n9olh"
-DESC = "transfer model - drift model bsoh5xyb retrained by loading and continuing training with --m c. No curriculum learning, small beta-r initial ranges, no Euclidean reward "
+LEARNED_TYPE = "drift"
+RUN_ID = "gs9xfxhy"
+DESC = "drift model - new ID'd params, 'speed' not 'accl' control, drift_real obs space, log_std fix applied"
+
+# LEARNED_TYPE = "drift"
+# RUN_ID = "wx0w5eqr"
+# DESC = "drift model - CW & CCW on track pool of [Drift_large, Drift_large_mirror, Drift2, Drift2mirror], with `sparse_width_obs` = True"
+
+# LEARNED_TYPE = "recover"
+# RUN_ID = "3y11m6mk"
+# DESC = "drift model - CW & CCW on track pool of [Drift_large, Drift_large_mirror], with `sparse_width_obs` = True"
+
+# LEARNED_TYPE = "recover"
+# RUN_ID = "zv45r303"
+# DESC = "transfer model - drift model bsoh5xyb retrained with Fine-Tuning with Fresh Optimizer + LR Reset + log_std reset with --m f. No curriculum learning, small beta-r initial ranges, no Euclidean reward"
+
+# LEARNED_TYPE = "drift"
+# RUN_ID = "8ncsx1rk"
+# DESC = "drift model - CW & CCW on Drift_large, with `sparse_width_obs` = True, 3rd train with seed 123"
+
+# LEARNED_TYPE = "transfer"
+# RUN_ID = "c76n9olh"
+# DESC = "transfer model - drift model bsoh5xyb retrained by loading and continuing training with --m c. No curriculum learning, small beta-r initial ranges, no Euclidean reward "
 
 # LEARNED_TYPE = "drift"
 # RUN_ID = "178a1a5l"
@@ -142,6 +162,10 @@ DESC = "transfer model - drift model bsoh5xyb retrained by loading and continuin
 # DESC = "transfer model - drift model bsoh5xyb retrained with Fine-Tuning with Fresh Optimizer + LR Reset + log_std reset + Critic Reinitialization. \nNo curriculum learning, small beta-r initial ranges, no Euclidean reward"
 
 # LEARNED_TYPE = "recover"
+# RUN_ID = "f1mgktxe"
+# DESC = "transfer model - drift model 8ncsx1rk retrained with Fine-Tuning with Fresh Optimizer + LR Reset + log_std reset + Critic Reinitialization. No curriculum learning, small beta-r initial ranges, no Euclidean reward"
+
+# LEARNED_TYPE = "recover"
 # RUN_ID = "gpti2zb1"
 # DESC = "recovering model - original with Euclidean reward, small beta, r ranges, and success reward 50,  collision penalty -100"
 
@@ -149,9 +173,9 @@ S = 96  # Arc length on IMS straight section
 SEED = 42
 
 # Grid parameters (radians / rad/s / m/s)
-BETA_VALUES = np.linspace(-1.39, 1.39, 7)  # 10 points, +/-60 deg
-R_VALUES = np.linspace(-13, 13, 7)  # 10 points, +/-180 deg/s
-V_VALUES = np.linspace(4, 5, 2)  # 3 points: [2, 7, 12]
+BETA_VALUES = np.linspace(-1.0472, 1.0472, 7)  # 10 points, +/-60 deg
+R_VALUES = np.linspace(-6.5, 6.5, 7)  # 10 points, +/-372 deg/s
+V_VALUES = np.linspace(3, 4, 2)  # 3 points: [2, 7, 12]
 YAW_VALUES = np.linspace(-0.17, 0.17, 3)  # 3 points: [-10, 0, +10] deg
 
 
@@ -378,6 +402,56 @@ def save_metrics(title, summary_lines, recovery_times, output_path, desc=""):
     print(f"Metrics saved to: {output_path}")
 
 
+def save_grid_cache(
+    path, recovery_rates, mean_recovery_times, successful_states, stanley_total, stanley_times, non_stanley_times
+):
+    """Save run_grid_evaluation results to an .npz cache file."""
+    np.savez(
+        path,
+        recovery_rates=recovery_rates,
+        mean_recovery_times=mean_recovery_times,
+        successful_states=np.array(successful_states) if successful_states else np.empty((0, 4)),
+        stanley_total=np.array(stanley_total),
+        stanley_times=np.array(stanley_times),
+        non_stanley_times=np.array(non_stanley_times),
+        beta_values=BETA_VALUES,
+        r_values=R_VALUES,
+        v_values=V_VALUES,
+        yaw_values=YAW_VALUES,
+    )
+    print(f"Grid results cached to: {path}")
+
+
+def load_grid_cache(path):
+    """Load and validate a cached grid_results.npz file.
+
+    Returns the six run_grid_evaluation outputs if the grid parameters match,
+    or raises ValueError if the cache was built with different grid settings.
+    """
+    data = np.load(path)
+    grids_match = (
+        np.allclose(data["beta_values"], BETA_VALUES)
+        and np.allclose(data["r_values"], R_VALUES)
+        and np.allclose(data["v_values"], V_VALUES)
+        and np.allclose(data["yaw_values"], YAW_VALUES)
+    )
+    if not grids_match:
+        raise ValueError(
+            f"Cached grid parameters in {path} do not match the current BETA/R/V/YAW_VALUES. "
+            "Delete the cache file or re-run with --no-cache to regenerate."
+        )
+
+    successful_states = [tuple(row) for row in data["successful_states"]]
+    return (
+        data["recovery_rates"],
+        data["mean_recovery_times"],
+        successful_states,
+        int(data["stanley_total"]),
+        list(data["stanley_times"]),
+        list(data["non_stanley_times"]),
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Beta-R Recovery Success Heatmap Analysis")
     parser.add_argument(
@@ -386,6 +460,7 @@ def parse_args():
     parser.add_argument("--learned_type", default=LEARNED_TYPE, help="Learned model type: 'drift' or 'recover'")
     parser.add_argument("--run_id", default=RUN_ID, help="Wandb run ID for the learned model")
     parser.add_argument("--desc", default=DESC, help="Short description of the model")
+    parser.add_argument("--no-cache", action="store_true", help="Ignore existing cache and re-run grid evaluation")
     return parser.parse_args()
 
 
@@ -395,6 +470,7 @@ def main():
     learned_type = args.learned_type
     run_id = args.run_id
     desc = args.desc
+    no_cache = args.no_cache
 
     print_header("Beta-R Recovery Success Heatmap Analysis")
     print(f"Controller: {controller_type}, Learned type: {learned_type}, Run ID: {run_id}")
@@ -402,82 +478,112 @@ def main():
 
     proj_root, _ = get_output_dirs()
 
-    model_path = f"{proj_root}/outputs/downloads/{run_id}/model.zip" if controller_type == "learned" else None
-    controller = create_controller(
-        controller_type,
-        model_path=model_path,
-        map="IMS",
-    )
-
-    config = controller.get_env_config()
-    config["training_mode"] = "recover"
-
-    eval_env = gym.make(
-        get_env_id(),
-        config=config,
-        render_mode=None,
-    )
-
-    controller.initialize(eval_env)
-
-    np.random.seed(SEED)
-
-    print(
-        f"\nRunning grid evaluation: {len(BETA_VALUES)}x{len(R_VALUES)} cells, "
-        f"{len(V_VALUES) * len(YAW_VALUES)} episodes per cell..."
-    )
-
-    # Load Stanley recovery states for learned controllers
-    stanley_states_path = f"{proj_root}/figures/analysis/recover_heatmap/stanley_recovery_states.npz"
-
-    # Load Stanley recovery states and validate they are a subset of current configured states
-    stanley_states = None
-    if controller_type == "learned" and os.path.exists(stanley_states_path):
-        data = np.load(stanley_states_path)
-
-        grids_match = (
-            np.allclose(data["beta_values"], BETA_VALUES)
-            and np.allclose(data["r_values"], R_VALUES)
-            and np.allclose(data["v_values"], V_VALUES)
-            and np.allclose(data["yaw_values"], YAW_VALUES)
-        )
-        if grids_match:
-            stanley_states = set(map(tuple, data["states"]))
-            print(f"Loaded {len(stanley_states)} Stanley recovery states for baseline comparison")
-        else:
-            raise ValueError(
-                "Stanley states were computed with a different grid — "
-                "re-run with --controller_type stanley to regenerate."
-            )
-    elif controller_type == "learned":
-        raise FileNotFoundError(f"{stanley_states_path} not found — run Stanley evaluation first for baseline metrics")
-
-    recovery_rates, mean_recovery_times, successful_states, stanley_total, stanley_times, non_stanley_times = (
-        run_grid_evaluation(eval_env, controller, stanley_states=stanley_states)
-    )
-
-    # Save Stanley successful states with grid parameters
-    if controller_type == "stanley" and successful_states:
-        save_dir = os.path.dirname(stanley_states_path)
-        os.makedirs(save_dir, exist_ok=True)
-        np.savez(
-            stanley_states_path,
-            states=np.array(successful_states),
-            beta_values=BETA_VALUES,
-            r_values=R_VALUES,
-            v_values=V_VALUES,
-            yaw_values=YAW_VALUES,
-        )
-        print(f"Saved {len(successful_states)} Stanley recovery states to: {stanley_states_path}")
-
     subfolder = (
         f"{proj_root}/figures/analysis/recover_heatmap/{run_id}"
         if controller_type == "learned"
         else f"{proj_root}/figures/analysis/recover_heatmap/{controller_type}"
     )
     os.makedirs(subfolder, exist_ok=True)
+    cache_path = os.path.join(subfolder, "grid_results.npz")
+
+    # Attempt to load from cache
+    if not no_cache and os.path.exists(cache_path):
+        print(f"\nFound cached grid results at: {cache_path}")
+        recovery_rates, mean_recovery_times, successful_states, stanley_total, stanley_times, non_stanley_times = (
+            load_grid_cache(cache_path)
+        )
+        print("Cache loaded successfully — skipping grid evaluation.")
+        eval_env = None
+    else:
+        if no_cache:
+            print("\n--no-cache flag set; ignoring existing cache and re-running grid evaluation.")
+
+        model_path = f"{proj_root}/outputs/downloads/{run_id}/model.zip" if controller_type == "learned" else None
+        controller = create_controller(
+            controller_type,
+            model_path=model_path,
+            map="IMS",
+        )
+
+        config = controller.get_env_config()
+        config["training_mode"] = "recover"
+
+        eval_env = gym.make(
+            get_env_id(),
+            config=config,
+            render_mode=None,
+        )
+
+        controller.initialize(eval_env)
+
+        np.random.seed(SEED)
+
+        # Load Stanley recovery states for learned controllers
+        stanley_states_path = f"{proj_root}/figures/analysis/recover_heatmap/stanley_recovery_states.npz"
+
+        stanley_states = None
+        if controller_type != "stanley" and os.path.exists(stanley_states_path):
+            data = np.load(stanley_states_path)
+
+            grids_match = (
+                np.allclose(data["beta_values"], BETA_VALUES)
+                and np.allclose(data["r_values"], R_VALUES)
+                and np.allclose(data["v_values"], V_VALUES)
+                and np.allclose(data["yaw_values"], YAW_VALUES)
+            )
+            if grids_match:
+                stanley_states = set(map(tuple, data["states"]))
+                print(f"Loaded {len(stanley_states)} Stanley recovery states for baseline comparison")
+            else:
+                raise ValueError(
+                    "Stanley states were computed with a different grid — "
+                    "re-run with --controller_type stanley to regenerate."
+                )
+        elif controller_type != "stanley":
+            raise FileNotFoundError(
+                f"{stanley_states_path} not found — run Stanley evaluation first for baseline metrics"
+            )
+
+        print(
+            f"\nRunning grid evaluation: {len(BETA_VALUES)}x{len(R_VALUES)} cells, "
+            f"{len(V_VALUES) * len(YAW_VALUES)} episodes per cell..."
+        )
+
+        recovery_rates, mean_recovery_times, successful_states, stanley_total, stanley_times, non_stanley_times = (
+            run_grid_evaluation(eval_env, controller, stanley_states=stanley_states)
+        )
+
+        # Cache results immediately after evaluation
+        save_grid_cache(
+            cache_path,
+            recovery_rates,
+            mean_recovery_times,
+            successful_states,
+            stanley_total,
+            stanley_times,
+            non_stanley_times,
+        )
+
+        # Save Stanley successful states with grid parameters
+        if controller_type == "stanley" and successful_states:
+            stanley_states_path = f"{proj_root}/figures/analysis/recover_heatmap/stanley_recovery_states.npz"
+            save_dir = os.path.dirname(stanley_states_path)
+            os.makedirs(save_dir, exist_ok=True)
+            np.savez(
+                stanley_states_path,
+                states=np.array(successful_states),
+                beta_values=BETA_VALUES,
+                r_values=R_VALUES,
+                v_values=V_VALUES,
+                yaw_values=YAW_VALUES,
+            )
+            print(f"Saved {len(successful_states)} Stanley recovery states to: {stanley_states_path}")
+
+        eval_env.close()
+
+    # Plotting and metrics (always runs, whether from cache or fresh)
     output_path = (
-        f"{subfolder}/beta_r_recovery_heatmap_{controller_type}{'_' + learned_type if learned_type else ''}_policy.png"
+        f"{subfolder}/beta_r_recovery_heatmap_{controller_type}{'_' + learned_type if learned_type else ''}_policy.pdf"
     )
     controller_label = f"{controller_type}" + (f" ({learned_type})" if learned_type else "")
     plot_recovery_heatmap(BETA_VALUES, R_VALUES, recovery_rates, output_path, controller_label=controller_label)
@@ -527,7 +633,6 @@ def main():
             desc=desc,
         )
 
-    eval_env.close()
     print("\nDone!")
 
 

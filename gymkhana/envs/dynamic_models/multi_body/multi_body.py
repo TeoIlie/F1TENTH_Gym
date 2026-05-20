@@ -1,8 +1,11 @@
+"""Multi-Body (MB) vehicle dynamics model."""
+
 import numpy as np
 from numba import njit
 
 from gymkhana.envs.dynamic_models.utils import accl_constraints, steering_constraint
 
+from ...params import to_named_tuple
 from ..kinematic import vehicle_dynamics_ks_cog
 from ..tire_model import (
     formula_lateral,
@@ -13,20 +16,19 @@ from ..tire_model import (
 
 
 def vehicle_dynamics_mb(x: np.ndarray, u_init: np.ndarray, params: dict):
-    """
-    vehicleDynamics_mb - multi-body vehicle dynamics based on the DoT (department of transportation) vehicle dynamics
-    reference point: center of mass
+    """Compute Multi-Body vehicle dynamics.
 
-    Syntax:
-        f = vehicleDynamics_mb(x,u,p)
+    DoT (Department of Transportation) based multi-body model. Reference point
+    is the center of mass. State vector is 29-dimensional; use
+    :meth:`DynamicModel.get_initial_state` to initialize correctly.
 
-    Inputs:
-        :param x: vehicle state vector
-        :param uInit: vehicle input vector
-        :param params: vehicle parameter vector
+    Args:
+        x: State vector of shape ``(29,)`` (see source for component index map).
+        u_init: Control input ``[steering_velocity, acceleration]``.
+        params: Vehicle parameters dict (see :mod:`gymkhana.envs.dynamic_models`).
 
-    Outputs:
-        :return f: right-hand side of differential equations
+    Returns:
+        Time derivatives of the state vector, shape ``(29,)``.
     """
 
     # ------------- BEGIN CODE --------------
@@ -290,37 +292,35 @@ def vehicle_dynamics_mb(x: np.ndarray, u_init: np.ndarray, params: dict):
     gamma_LR = x[6] + params["D_r"] * z_SLR + params["E_r"] * (z_SLR) ** 2
     gamma_RR = x[6] - params["D_r"] * z_SRR - params["E_r"] * (z_SRR) ** 2
 
+    # The tire formulas are @njit and consume a VehicleParams NamedTuple.
+    # MB is the only model that is itself pure-Python while reaching into the
+    # jitted tire model, so we build the NamedTuple once locally here. Cost is
+    # ~µs; MB itself is far slower per call than the conversion.
+    params_nt = to_named_tuple(params)
+
     # compute longitudinal tire forces using the magic formula for pure slip
-    F0_x_LF = formula_longitudinal(s_lf, gamma_LF, F_z_LF, params)
-    F0_x_RF = formula_longitudinal(s_rf, gamma_RF, F_z_RF, params)
-    F0_x_LR = formula_longitudinal(s_lr, gamma_LR, F_z_LR, params)
-    F0_x_RR = formula_longitudinal(s_rr, gamma_RR, F_z_RR, params)
+    F0_x_LF = formula_longitudinal(s_lf, gamma_LF, F_z_LF, params_nt)
+    F0_x_RF = formula_longitudinal(s_rf, gamma_RF, F_z_RF, params_nt)
+    F0_x_LR = formula_longitudinal(s_lr, gamma_LR, F_z_LR, params_nt)
+    F0_x_RR = formula_longitudinal(s_rr, gamma_RR, F_z_RR, params_nt)
 
     # compute lateral tire forces using the magic formula for pure slip
-    res = formula_lateral(alpha_LF, gamma_LF, F_z_LF, params)
-    F0_y_LF = res[0]
-    mu_y_LF = res[1]
-    res = formula_lateral(alpha_RF, gamma_RF, F_z_RF, params)
-    F0_y_RF = res[0]
-    mu_y_RF = res[1]
-    res = formula_lateral(alpha_LR, gamma_LR, F_z_LR, params)
-    F0_y_LR = res[0]
-    mu_y_LR = res[1]
-    res = formula_lateral(alpha_RR, gamma_RR, F_z_RR, params)
-    F0_y_RR = res[0]
-    mu_y_RR = res[1]
+    F0_y_LF, mu_y_LF = formula_lateral(alpha_LF, gamma_LF, F_z_LF, params_nt)
+    F0_y_RF, mu_y_RF = formula_lateral(alpha_RF, gamma_RF, F_z_RF, params_nt)
+    F0_y_LR, mu_y_LR = formula_lateral(alpha_LR, gamma_LR, F_z_LR, params_nt)
+    F0_y_RR, mu_y_RR = formula_lateral(alpha_RR, gamma_RR, F_z_RR, params_nt)
 
     # compute longitudinal tire forces using the magic formula for combined slip
-    F_x_LF = formula_longitudinal_comb(s_lf, alpha_LF, F0_x_LF, params)
-    F_x_RF = formula_longitudinal_comb(s_rf, alpha_RF, F0_x_RF, params)
-    F_x_LR = formula_longitudinal_comb(s_lr, alpha_LR, F0_x_LR, params)
-    F_x_RR = formula_longitudinal_comb(s_rr, alpha_RR, F0_x_RR, params)
+    F_x_LF = formula_longitudinal_comb(s_lf, alpha_LF, F0_x_LF, params_nt)
+    F_x_RF = formula_longitudinal_comb(s_rf, alpha_RF, F0_x_RF, params_nt)
+    F_x_LR = formula_longitudinal_comb(s_lr, alpha_LR, F0_x_LR, params_nt)
+    F_x_RR = formula_longitudinal_comb(s_rr, alpha_RR, F0_x_RR, params_nt)
 
     # compute lateral tire forces using the magic formula for combined slip
-    F_y_LF = formula_lateral_comb(s_lf, alpha_LF, gamma_LF, mu_y_LF, F_z_LF, F0_y_LF, params)
-    F_y_RF = formula_lateral_comb(s_rf, alpha_RF, gamma_RF, mu_y_RF, F_z_RF, F0_y_RF, params)
-    F_y_LR = formula_lateral_comb(s_lr, alpha_LR, gamma_LR, mu_y_LR, F_z_LR, F0_y_LR, params)
-    F_y_RR = formula_lateral_comb(s_rr, alpha_RR, gamma_RR, mu_y_RR, F_z_RR, F0_y_RR, params)
+    F_y_LF = formula_lateral_comb(s_lf, alpha_LF, gamma_LF, mu_y_LF, F_z_LF, F0_y_LF, params_nt)
+    F_y_RF = formula_lateral_comb(s_rf, alpha_RF, gamma_RF, mu_y_RF, F_z_RF, F0_y_RF, params_nt)
+    F_y_LR = formula_lateral_comb(s_lr, alpha_LR, gamma_LR, mu_y_LR, F_z_LR, F0_y_LR, params_nt)
+    F_y_RR = formula_lateral_comb(s_rr, alpha_RR, gamma_RR, mu_y_RR, F_z_RR, F0_y_RR, params_nt)
 
     # auxiliary movements for compliant joint equations
     delta_z_f = params["h_s"] - params["R_w"] + x[16] - x[11]
@@ -472,9 +472,9 @@ def vehicle_dynamics_mb(x: np.ndarray, u_init: np.ndarray, params: dict):
         # wheelbase
         lwb = params["lf"] + params["lr"]
         # system dynamics
-        x_ks = [x[0], x[1], x[2], x[3], x[4]]
-        # kinematic model
-        f_ks = vehicle_dynamics_ks_cog(np.array(x_ks), u, params)
+        x_ks = np.array([x[0], x[1], x[2], x[3], x[4]], dtype=np.float64)
+        # kinematic model — ks_cog is jitted, so route through params_nt
+        f_ks = vehicle_dynamics_ks_cog(x_ks, u, params_nt)
         f[0:5] = np.array([f_ks[0], f_ks[1], f_ks[2], f_ks[3], f_ks[4]])
         # derivative of slip angle and yaw rate
         d_beta = (params["lr"] * u[0]) / (lwb * np.cos(x[2]) ** 2 * (1 + (np.tan(x[2]) ** 2 * params["lr"] / lwb) ** 2))

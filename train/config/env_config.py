@@ -7,6 +7,7 @@ import os
 import yaml
 
 from gymkhana.envs.gymkhana_env import GKEnv
+from gymkhana.presets import drift_config
 
 # ====================================
 # RL config
@@ -24,9 +25,20 @@ END_LEARNING_RATE = _rl_config["end_learning_rate"]
 SEED = _rl_config["seed"]
 EVAL_SEED = _rl_config["eval_seed"]
 ACT_FUNC_NEG_SLOPE = _rl_config["act_func_neg_slope"]
+USE_CUSTOM_RELU = _rl_config["use_custom_relu"]
+ACTOR_LAYER_SIZE = _rl_config["actor_layer_size"]
+CRITIC_LAYER_SIZE = _rl_config["critic_layer_size"]
 ADDITIONAL_TIMESTEPS = _rl_config["additional_timesteps"]
 TRANSFER_RESET_LOG_STD = _rl_config["transfer_reset_log_std"]
 TRANSFER_RESET_CRITIC = _rl_config["transfer_reset_critic"]
+
+# log_std schedule for fresh training (mode 't'). None when disabled (block commented out).
+LOG_STD_SCHEDULE = _rl_config.get("log_std_schedule")
+if LOG_STD_SCHEDULE is not None:
+    _required = {"init", "end"}
+    _got = set(LOG_STD_SCHEDULE.keys())
+    if _got != _required:
+        raise ValueError(f"log_std_schedule must have keys exactly {sorted(_required)}, got {sorted(_got)}")
 
 
 # ====================================
@@ -36,42 +48,31 @@ _config_path = os.path.join(os.path.dirname(__file__), "gym_config.yaml")
 with open(_config_path, "r") as f:
     _config = yaml.safe_load(f)
 
-# Gym shared parameters
+# Gym shared parameters. Defaults from the public ``drift_config`` preset are not duplicated
 PROJECT_NAME = _config["project_name"]
 RACE_TRAINING_MODE = _config["race_training_mode"]
 MAP = _config["map"]
 TRACK_POOL = _config["track_pool"]
-MODEL = _config["model"]
-TIMESTEP = _config["timestep"]
-NUM_AGENTS = _config["num_agents"]
-INTEGRATOR = _config["integrator"]
-ACTION_INPUT = _config["action_input"]
-OBS_TYPE = _config["obs_type"]
-RESET_CONFIG = _config["reset_config"]
 TRACK_DIRECTION = _config["track_direction"]
-LOOKAHEAD_N_POINTS = _config["lookahead_n_points"]
-LOOKAHEAD_DS = _config["lookahead_ds"]
+NUM_BEAMS = _config["num_beams"]  # training-only: minimal LiDAR beams to save compute
 SPARSE_WIDTH_OBS = _config["sparse_width_obs"]
-NORM_OBS = _config["normalize_obs"]
 RECORD_OBS_MIN_MAX = _config["record_obs_min_max"]
-PREDICTIVE_COLLISION = _config["predictive_collision"]
-NORM_ACT = _config["normalize_act"]
-WALL_DEFLECTION = _config["wall_deflection"]
+PREVENT_INSTABILITY = _config["prevent_instability"]
 
 # Vehicle parameters
-PARAMS = GKEnv.f1tenth_std_drift_bias_params()
+PARAMS = GKEnv.f1tenth_std_vehicle_params()
 
 # Render/debug params
 TEST_DEBUG_RENDER = _config["test_debug_render"]
 TRAIN_DEBUG_RENDER = _config["train_debug_render"]
 
+# Domain randomization
+DOMAIN_RANDOMIZATION = _config.get("domain_randomization")
+
 # Callback config
 CKPT_SAVE_FREQ = _config["ckpt_save_freq"]
 N_EVAL_EPISODES = _config["n_eval_episodes"]
 BEST_MODEL = "best_model"
-
-# LiDAR beams
-NUM_BEAMS = _config["num_beams"]
 
 # Recovery-specific configs
 RECOVERY_PROJECT_NAME = _config["recovery_project_name"]
@@ -91,31 +92,25 @@ def get_env_id():
 
 def _base_config(debug_render):
     """
-    Returns environment params shared across all environments
+    Returns environment params shared across all environments. Inherits all
+    drift defaults from the public ``drift_config`` preset and overrides only:
+
+    - per-experiment knobs (``params``, training-only ``num_beams``)
+    - training-workflow-only keys (debug renders, telemetry, instability
+      checks, ``sparse_width_obs``)
     """
-    return {
-        "num_agents": NUM_AGENTS,
-        "timestep": TIMESTEP,
-        "integrator": INTEGRATOR,
-        "model": MODEL,
-        "num_beams": NUM_BEAMS,
-        "control_input": ACTION_INPUT,
-        "observation_config": {"type": OBS_TYPE},
-        "reset_config": {"type": RESET_CONFIG},
-        "render_lookahead_curvatures": debug_render,  # Enable lookahead curvature visualization
-        "lookahead_n_points": LOOKAHEAD_N_POINTS,
-        "lookahead_ds": LOOKAHEAD_DS,
-        "sparse_width_obs": SPARSE_WIDTH_OBS,
-        "debug_frenet_projection": debug_render,  # Enable Frenet projection debug visualization
-        "params": PARAMS,
-        "render_track_lines": debug_render,  # View track lines
-        "render_arc_length_annotations": debug_render,
-        "normalize_obs": NORM_OBS,
-        "record_obs_min_max": RECORD_OBS_MIN_MAX,
-        "predictive_collision": PREDICTIVE_COLLISION,
-        "normalize_act": NORM_ACT,
-        "wall_deflection": WALL_DEFLECTION,
-    }
+    return drift_config(
+        params=PARAMS,
+        num_beams=NUM_BEAMS,
+        # training-workflow-specific keys not in drift_config
+        render_lookahead_curvatures=debug_render,
+        debug_frenet_projection=debug_render,
+        render_track_lines=debug_render,
+        render_arc_length_annotations=debug_render,
+        sparse_width_obs=SPARSE_WIDTH_OBS,
+        record_obs_min_max=RECORD_OBS_MIN_MAX,
+        prevent_instability=PREVENT_INSTABILITY,
+    )
 
 
 def _drift_overrides():
@@ -164,7 +159,7 @@ def get_drift_train_config():
     """
     Returns gym drift TRAINING environment config
     """
-    return {**_base_config(TRAIN_DEBUG_RENDER), **_drift_overrides()}
+    return {**_base_config(TRAIN_DEBUG_RENDER), **_drift_overrides(), "domain_randomization": DOMAIN_RANDOMIZATION}
 
 
 def get_recovery_test_config():
@@ -178,7 +173,7 @@ def get_recovery_train_config():
     """
     Returns gym recovery TRAINING environment config
     """
-    return {**_base_config(TRAIN_DEBUG_RENDER), **_recovery_overrides()}
+    return {**_base_config(TRAIN_DEBUG_RENDER), **_recovery_overrides(), "domain_randomization": DOMAIN_RANDOMIZATION}
 
 
 def get_curriculum_config():

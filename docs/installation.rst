@@ -31,16 +31,6 @@ Using poetry
    poetry install
    source $(poetry env info -p)/bin/activate  # or prefix commands with `poetry run`
 
-Using Docker
-------------
-
-A Dockerfile is provided with GUI support via nvidia-docker (NVIDIA GPU required):
-
-.. code:: bash
-
-   docker build -t gymkhana -f Dockerfile .
-   docker run --gpus all -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix gymkhana
-
 .. _additional-dependencies:
 
 Additional dependencies

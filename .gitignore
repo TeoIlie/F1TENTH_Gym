@@ -177,6 +177,7 @@ cython_debug/
 # Other
 scratch
 .python-version
+.codex
 
 # Training outputs (models, videos, logs) from tensorboard, wandb
 
@@ -193,5 +194,12 @@ st_acados_ocp.json
 
 mpc-ref/
 
-# Analysis figures
+# Analysis and test figures 
 figures/analysis/
+figures/tests/
+
+# ROS2 bags for analysis
+examples/analysis/bags
+
+# Optuna study databases (Phase 3+)
+studies/

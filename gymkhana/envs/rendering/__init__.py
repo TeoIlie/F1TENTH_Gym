@@ -14,6 +14,7 @@ def make_renderer(
     agent_ids: list[str],
     render_mode: Optional[str] = None,
     render_fps: Optional[int] = 100,
+    render_config: Optional[dict] = None,
 ) -> tuple[EnvRenderer, RenderSpec]:
     """
     Return an instance of the renderer and the rendering specification.
@@ -30,9 +31,12 @@ def make_renderer(
         rendering mode, by default None
     render_fps : int, optional
         rendering frames per second, by default 100
+    render_config : dict, optional
+        per-field overrides for the packaged ``rendering.yaml`` (e.g.
+        ``{"window_size": 1200, "render_type": "pygame"}``)
     """
     cfg_file = pathlib.Path(__file__).parent.absolute() / "rendering.yaml"
-    render_spec = RenderSpec.from_yaml(cfg_file)
+    render_spec = RenderSpec.from_yaml(cfg_file, overrides=render_config)
 
     if render_mode in ["human", "rgb_array", "human_fast"]:
         if render_spec.render_type == "pygame":

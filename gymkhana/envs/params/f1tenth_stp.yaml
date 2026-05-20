@@ -1,0 +1,59 @@
+# Default parameters for the 1/10th scale F1TENTH car (STP model).
+# Single Track Pacejka: dynamic single-track chassis with a Pacejka Magic
+# Formula lateral tire model (no longitudinal slip / wheel-spin states).
+#
+# Pacejka coefficients seeded from the on-track sysid pipeline output:
+#   race_stack/system_identification/on_track_sys_id/models/SIM/SIM_pacejka.txt
+# Note: that file folds friction into D and uses no separate mu. Here mu is
+# kept as an explicit multiplier (matches the f110-simulator update_pacejka
+# convention). Set mu=1.0 below for sysid-faithful behavior.
+
+# =========================
+# Geometry / inertia
+# =========================
+m: 3.74           # mass [kg]
+I_z: 0.04712      # yaw moment of inertia [kg m^2]
+lf: 0.15875       # CoG to front axle [m]
+lr: 0.17145       # CoG to rear axle [m]
+h_s: 0.074        # CoG height (sprung mass) [m]
+width: 0.31
+length: 0.58
+
+# =========================
+# Friction & Pacejka lateral tire coefficients
+# =========================
+mu: 1.0489        # explicit lateral friction multiplier; sysid expects mu=1.0
+B_f: 6.6185       # front stiffness factor
+C_f: 1.6102       # front shape factor
+D_f: 0.652        # front peak factor (μ-equivalent, dimensionless)
+E_f: 0.7826       # front curvature factor
+B_r: 7.9507       # rear stiffness factor
+C_r: 3.692        # rear shape factor
+D_r: 0.6691       # rear peak factor
+E_r: 0.5595       # rear curvature factor
+
+# =========================
+# Steering constraints
+# =========================
+s_min: -0.52  # originally -0.4189
+s_max: 0.52  # originally 0.4189
+sv_min: -4.95 # originally -3.2
+sv_max: 4.95 # originally 3.2
+# T_steer: 0.025  # Steering actuator time constant (s). Uncomment to enable first-order lag (requires bench ID).
+
+# =========================
+# Longitudinal constraints
+# =========================
+v_switch: 7.319
+a_max: 6.0
+v_min: -5.0
+v_max: 20.0
+
+# =========================
+# Blend thresholds
+# =========================
+# Values mirror the f110-simulator reference (std_kinematics.cpp)
+# optionally change to blend_v_s = 0.2, blend_v_b = 0.05, blend_v_min = 0.1 - better performance, but more integration instability
+blend_v_s: 3.0
+blend_v_b: 1.0
+blend_v_min: 1.0

@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import patch
 
 import gymnasium as gym
 import numpy as np
@@ -14,9 +13,10 @@ class TestFrenetModeReset(unittest.TestCase):
     NOT on lap completion or non-ego agent collisions.
     """
 
-    def setUp(self):
+    @classmethod
+    def setUpClass(cls):
         """Create test environment with Frenet boundary checking enabled."""
-        self.env = gym.make(
+        cls.env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
@@ -26,11 +26,12 @@ class TestFrenetModeReset(unittest.TestCase):
                 "predictive_collision": False,  # Enable Frenet boundary checking
             },
         )
-        self.env.reset()
+        cls.env.reset()
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
         """Clean up environment."""
-        self.env.close()
+        cls.env.close()
 
     def test_frenet_mode_reset_on_boundary_violation(self):
         """Test that _check_done returns True when ego agent exceeds track boundaries."""
@@ -46,12 +47,10 @@ class TestFrenetModeReset(unittest.TestCase):
         unwrapped.poses_y = np.array([0.0])
         unwrapped.poses_theta = np.array([0.0])
 
-        # Mock: ego agent exceeds boundary (ey=2.5m > half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 2.5, 0.0)):
-            # Update state to populate boundary_exceeded array
-            unwrapped._update_state()
-            # Check if done
-            done, _, _ = unwrapped._check_done()
+        # Exceeds boundary (ey=2.5m > half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 2.5, 0.0]
+        unwrapped._update_state()
+        done, _, _ = unwrapped._check_done()
 
         self.assertTrue(done, "Environment should reset when ego agent exceeds track boundary in Frenet mode")
 
@@ -72,12 +71,10 @@ class TestFrenetModeReset(unittest.TestCase):
         # Initialize toggle_list to simulate no lap completion
         unwrapped.toggle_list = np.array([0])
 
-        # Mock: ego agent within boundaries (ey=0.5m < half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 0.5, 0.0)):
-            # Update state to populate boundary_exceeded array
-            unwrapped._update_state()
-            # Check if done
-            done, _, _ = unwrapped._check_done()
+        # Within boundaries (ey=0.5m < half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 0.5, 0.0]
+        unwrapped._update_state()
+        done, _, _ = unwrapped._check_done()
 
         self.assertFalse(done, "Environment should NOT reset when ego agent is within track boundaries in Frenet mode")
 
@@ -88,57 +85,101 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
     Terminated: Episode ends due to a terminal event (collision, boundary violation, or lap completion)
     Truncated: Episode ends due to reaching the maximum timestep limit
+
+    Uses shared class-level envs grouped by config to avoid redundant gym.make() calls.
+    Each test fully overwrites the relevant state before calling _check_done().
     """
 
-    def test_predictive_collision_mode_terminated_on_collision(self):
-        """Test that terminated=True when predictive_collision=True and ego agent collides."""
-        env = gym.make(
+    @classmethod
+    def setUpClass(cls):
+        """Create shared environments for all tests in this class."""
+        # 1-agent predictive collision env (used by most tests)
+        cls.env_predictive_1agent = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
                 "num_agents": 1,
                 "observation_config": {"type": None},
                 "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": True,  # TTC-based collision detection
+                "predictive_collision": True,
+                "max_episode_steps": 100,
             },
         )
-        env.reset()
-        unwrapped = env.unwrapped
+        cls.env_predictive_1agent.reset()
+
+        # 1-agent Frenet mode env
+        cls.env_frenet_1agent = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "observation_config": {"type": None},
+                "reset_config": {"type": "rl_random_static"},
+                "predictive_collision": False,
+            },
+        )
+        cls.env_frenet_1agent.reset()
+
+        # 2-agent predictive collision env
+        cls.env_predictive_2agent = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 2,
+                "ego_idx": 0,
+                "observation_config": {"type": None},
+                "reset_config": {"type": "rl_random_static"},
+                "predictive_collision": True,
+            },
+        )
+        cls.env_predictive_2agent.reset()
+
+        # 2-agent Frenet mode env
+        cls.env_frenet_2agent = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 2,
+                "ego_idx": 0,
+                "observation_config": {"type": None},
+                "reset_config": {"type": "rl_random_static"},
+                "predictive_collision": False,
+            },
+        )
+        cls.env_frenet_2agent.reset()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.env_predictive_1agent.close()
+        cls.env_frenet_1agent.close()
+        cls.env_predictive_2agent.close()
+        cls.env_frenet_2agent.close()
+
+    def test_predictive_collision_mode_terminated_on_collision(self):
+        """Test that terminated=True when predictive_collision=True and ego agent collides."""
+        unwrapped = self.env_predictive_1agent.unwrapped
 
         # Set up state with collision
         unwrapped.collisions = np.array([1.0])  # Ego agent (index 0) has collision
         unwrapped.toggle_list = np.array([0])  # No lap completion
-        unwrapped.current_step = 100  # Within max_episode_steps
+        unwrapped.current_step = 50  # Within max_episode_steps
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertTrue(terminated, "terminated should be True when ego agent collides in predictive_collision mode")
         self.assertFalse(truncated, "truncated should be False when collision occurs before time limit")
 
     def test_predictive_collision_mode_not_terminated_no_collision(self):
         """Test that terminated=False when predictive_collision=True and no collision."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 1,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": True,  # TTC-based collision detection
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_predictive_1agent.unwrapped
 
         # Set up state without collision
         unwrapped.collisions = np.array([0.0])  # No collision
         unwrapped.toggle_list = np.array([0])  # No lap completion
-        unwrapped.current_step = 100  # Within max_episode_steps
+        unwrapped.current_step = 50  # Within max_episode_steps
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertFalse(
             terminated,
             "terminated should be False when no collision in predictive_collision mode without lap completion",
@@ -147,27 +188,15 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
     def test_predictive_collision_mode_terminated_on_lap_completion(self):
         """Test that terminated=True when predictive_collision=True and all agents complete 2 laps."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 2,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": True,  # TTC-based collision detection
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_predictive_2agent.unwrapped
 
         # Set up state with both agents completing 2 laps (toggle_list >= 4)
         unwrapped.collisions = np.array([0.0, 0.0])  # No collisions
         unwrapped.toggle_list = np.array([4, 4])  # Both agents completed 2 laps
-        unwrapped.current_step = 100  # Within max_episode_steps
+        unwrapped.current_step = 50  # Within max_episode_steps
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertTrue(
             terminated, "terminated should be True when all agents complete 2 laps in predictive_collision mode"
         )
@@ -175,18 +204,7 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
     def test_frenet_mode_terminated_on_boundary_violation(self):
         """Test that terminated=True when predictive_collision=False and boundary is violated."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 1,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": False,  # Frenet-based boundary checking
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_frenet_1agent.unwrapped
 
         # Mock track with known boundaries
         unwrapped.track.centerline.w_lefts = np.array([2.0] * 100)
@@ -198,29 +216,17 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
         unwrapped.poses_y = np.array([0.0])
         unwrapped.poses_theta = np.array([0.0])
 
-        # Mock: ego agent exceeds boundary (ey=2.5m > half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 2.5, 0.0)):
-            unwrapped._update_state()
-            terminated, truncated, _ = unwrapped._check_done()
+        # Exceeds boundary (ey=2.5m > half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 2.5, 0.0]
+        unwrapped._update_state()
+        terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertTrue(terminated, "terminated should be True when ego agent exceeds track boundary in Frenet mode")
         self.assertFalse(truncated, "truncated should be False when boundary violation occurs before time limit")
 
     def test_frenet_mode_not_terminated_within_boundaries(self):
         """Test that terminated=False when predictive_collision=False and within boundaries."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 1,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": False,  # Frenet-based boundary checking
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_frenet_1agent.unwrapped
 
         # Mock track with known boundaries
         unwrapped.track.centerline.w_lefts = np.array([2.0] * 100)
@@ -235,12 +241,11 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
         # Initialize toggle_list to simulate no lap completion
         unwrapped.toggle_list = np.array([0])
 
-        # Mock: ego agent within boundaries (ey=0.5m < half_width=2.0m)
-        with patch.object(unwrapped.track, "cartesian_to_frenet", return_value=(50.0, 0.5, 0.0)):
-            unwrapped._update_state()
-            terminated, truncated, _ = unwrapped._check_done()
+        # Within boundaries (ey=0.5m < half_width=2.0m)
+        unwrapped._frenet_cache[0] = [50.0, 0.5, 0.0]
+        unwrapped._update_state()
+        terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertFalse(
             terminated, "terminated should be False when ego agent is within track boundaries in Frenet mode"
         )
@@ -248,19 +253,7 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
     def test_truncated_when_max_episode_steps_reached(self):
         """Test that truncated=True when current_step exceeds max_episode_steps."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 1,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "max_episode_steps": 100,
-                "predictive_collision": True,
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_predictive_1agent.unwrapped
 
         # Set up state that would normally not be terminal
         unwrapped.collisions = np.array([0.0])  # No collision
@@ -269,25 +262,12 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertFalse(terminated, "terminated should be False when time limit is only reason for episode end")
         self.assertTrue(truncated, "truncated should be True when current_step exceeds max_episode_steps")
 
     def test_truncated_when_at_max_episode_steps(self):
         """Test that truncated=False when current_step equals max_episode_steps (not exceeds)."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 1,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "max_episode_steps": 100,
-                "predictive_collision": True,
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_predictive_1agent.unwrapped
 
         # Set up state at exactly max_episode_steps
         unwrapped.collisions = np.array([0.0])  # No collision
@@ -296,26 +276,13 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertFalse(
             truncated, "truncated should be False when current_step equals (not exceeds) max_episode_steps"
         )
 
     def test_truncated_not_set_when_terminal_event_occurs(self):
         """Test that truncated remains False even if max_episode_steps is reached when terminal event occurs."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 1,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "max_episode_steps": 100,
-                "predictive_collision": True,
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_predictive_1agent.unwrapped
 
         # Set up state with collision AND max_episode_steps exceeded
         unwrapped.collisions = np.array([1.0])  # Collision occurs
@@ -324,34 +291,20 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertTrue(terminated, "terminated should be True when collision occurs")
         self.assertTrue(truncated, "truncated should be True when max_episode_steps exceeded (both can be true)")
 
     def test_predictive_collision_multi_agent_only_ego_collision_matters(self):
         """Test that in predictive_collision mode, only ego agent collision triggers termination."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 2,
-                "ego_idx": 0,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": True,
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_predictive_2agent.unwrapped
 
         # Set up state where non-ego agent collides but ego doesn't
         unwrapped.collisions = np.array([0.0, 1.0])  # Only non-ego agent (index 1) collides
         unwrapped.toggle_list = np.array([0, 0])  # No lap completion
-        unwrapped.current_step = 100  # Within max_episode_steps
+        unwrapped.current_step = 50  # Within max_episode_steps
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertFalse(
             terminated,
             "terminated should be False when only non-ego agent collides in predictive_collision mode",
@@ -359,28 +312,15 @@ class TestTerminatedTruncatedLogic(unittest.TestCase):
 
     def test_frenet_collision_multi_agent_only_ego_boundary_matters(self):
         """Test that in Frenet mode, only ego agent boundary violation triggers termination."""
-        env = gym.make(
-            "gymkhana:gymkhana-v0",
-            config={
-                "map": "Spielberg",
-                "num_agents": 2,
-                "ego_idx": 0,
-                "observation_config": {"type": None},
-                "reset_config": {"type": "rl_random_static"},
-                "predictive_collision": False,
-            },
-        )
-        env.reset()
-        unwrapped = env.unwrapped
+        unwrapped = self.env_frenet_2agent.unwrapped
 
         # Directly set boundary_exceeded: only non-ego agent exceeds boundary
         unwrapped.boundary_exceeded = np.array([False, True])  # Ego agent OK, non-ego exceeds
         unwrapped.toggle_list = np.array([0, 0])  # No lap completion
-        unwrapped.current_step = 100  # Within max_episode_steps
+        unwrapped.current_step = 50  # Within max_episode_steps
 
         terminated, truncated, _ = unwrapped._check_done()
 
-        env.close()
         self.assertFalse(
             terminated,
             "terminated should be False when only non-ego agent exceeds boundary in Frenet mode",
@@ -394,9 +334,10 @@ class TestFullStateReset(unittest.TestCase):
     Users can provide 7 states and omega_f, omega_r are calculated automatically.
     """
 
-    def setUp(self):
-        """Create test environment with STD model."""
-        self.env = gym.make(
+    @classmethod
+    def setUpClass(cls):
+        """Create test environment with STD model (shared across all tests)."""
+        cls.env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
@@ -408,9 +349,10 @@ class TestFullStateReset(unittest.TestCase):
             },
         )
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
         """Clean up environment."""
-        self.env.close()
+        cls.env.close()
 
     def test_backward_compatible_pose_only_reset(self):
         """Test that existing pose-only reset still works."""
@@ -471,10 +413,56 @@ class TestFullStateReset(unittest.TestCase):
 
     def test_wrong_state_shape_error(self):
         """Test that wrong state shape raises clear error."""
-        wrong_states = np.array([[0.0, 0.0, 0.0]])  # Only 3 elements instead of 7
+        wrong_states = np.array([[0.0, 0.0, 0.0]])  # Only 3 elements instead of 7 or 9
 
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             self.env.reset(options={"states": wrong_states})
+
+        # Width 8 is not in the accepted set (7, 9) for STD either.
+        wrong_states_8 = np.zeros((1, 8))
+        with self.assertRaises(ValueError):
+            self.env.reset(options={"states": wrong_states_8})
+
+    def test_full_state_reset_std_9_elements(self):
+        """Test full 9-element state initialization preserves wheel angular velocities."""
+        # State: [x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]
+        # Use wheel speeds that intentionally do NOT match the no-slip formula
+        # so we can be sure they are taken as-given.
+        omega_f_user = 123.0
+        omega_r_user = 456.0
+        states = np.array([[1.0, 2.0, 0.1, 5.0, np.pi / 4, 0.5, 0.05, omega_f_user, omega_r_user]])
+        self.env.reset(options={"states": states})
+
+        state = self.env.unwrapped.sim.agents[0].state
+        self.assertAlmostEqual(state[0], 1.0, places=5)
+        self.assertAlmostEqual(state[1], 2.0, places=5)
+        self.assertAlmostEqual(state[2], 0.1, places=5)
+        self.assertAlmostEqual(state[3], 5.0, places=5)
+        self.assertAlmostEqual(state[4], np.pi / 4, places=5)
+        self.assertAlmostEqual(state[5], 0.5, places=5)
+        self.assertAlmostEqual(state[6], 0.05, places=5)
+        # Wheel speeds taken as given, NOT re-derived from no-slip formula.
+        self.assertAlmostEqual(state[7], omega_f_user, places=5)
+        self.assertAlmostEqual(state[8], omega_r_user, places=5)
+
+    def test_9_element_preserves_wheel_speeds_under_velocity_clamp(self):
+        """When v is clamped, the explicit wheel speeds are still taken as given.
+
+        Documents the contract that the caller owns consistency between v and
+        omega_{f,r} when supplying a 9-wide row.
+        """
+        params = self.env.unwrapped.params
+        # Pick a velocity outside the [v_min, v_max] window so it gets clamped.
+        v_request = params["v_max"] + 100.0
+        omega_f_user = 7.0
+        omega_r_user = 11.0
+        states = np.array([[0.0, 0.0, 0.0, v_request, 0.0, 0.0, 0.0, omega_f_user, omega_r_user]])
+        self.env.reset(options={"states": states})
+
+        state = self.env.unwrapped.sim.agents[0].state
+        self.assertAlmostEqual(state[3], params["v_max"], places=5)  # clamped
+        self.assertAlmostEqual(state[7], omega_f_user, places=5)  # unchanged
+        self.assertAlmostEqual(state[8], omega_r_user, places=5)  # unchanged
 
     def test_wrong_num_agents_error(self):
         """Test that wrong number of agents in states raises error."""
@@ -492,28 +480,29 @@ class TestFullStateReset(unittest.TestCase):
 
         states = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])  # Only 1 agent
 
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             env.reset(options={"states": states})
 
         env.close()
 
-    def test_non_std_model_states_error(self):
-        """Test that using states with non-STD model raises error."""
+    def test_mb_model_states_rejected(self):
+        """Test that full-state reset is rejected for the MB model."""
         env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
                 "num_agents": 1,
-                "model": "st",  # Single Track model, not STD
+                "model": "mb",
+                "params": GKEnv.fullscale_vehicle_params(),
                 "observation_config": {"type": None},
             },
         )
 
-        states = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        states = np.zeros((1, 7))
 
         with self.assertRaises(ValueError) as ctx:
             env.reset(options={"states": states})
-        self.assertIn("only supported for STD model", str(ctx.exception))
+        self.assertIn("MB", str(ctx.exception))
 
         env.close()
 
@@ -552,9 +541,10 @@ class TestMultiAgentFullStateReset(unittest.TestCase):
 class TestStateConstraints(unittest.TestCase):
     """Tests for constraint application in full state reset."""
 
-    def setUp(self):
-        """Create test environment with STD model."""
-        self.env = gym.make(
+    @classmethod
+    def setUpClass(cls):
+        """Create test environment with STD model (shared across all tests)."""
+        cls.env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
@@ -565,9 +555,10 @@ class TestStateConstraints(unittest.TestCase):
             },
         )
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
         """Clean up environment."""
-        self.env.close()
+        cls.env.close()
 
     def test_steering_constraint_applied(self):
         """Test that steering angle is clamped to valid range."""
@@ -597,9 +588,10 @@ class TestStateConstraints(unittest.TestCase):
 class TestSimulationContinuation(unittest.TestCase):
     """Tests for simulation behavior after full state reset."""
 
-    def setUp(self):
-        """Create test environment with STD model."""
-        self.env = gym.make(
+    @classmethod
+    def setUpClass(cls):
+        """Create test environment with STD model (shared across all tests)."""
+        cls.env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
@@ -611,9 +603,10 @@ class TestSimulationContinuation(unittest.TestCase):
             },
         )
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
         """Clean up environment."""
-        self.env.close()
+        cls.env.close()
 
     def test_simulation_continues_from_state(self):
         """Test that simulation correctly continues from initialized state."""
@@ -649,13 +642,33 @@ class TestSimulationContinuation(unittest.TestCase):
         restored_state = self.env.unwrapped.sim.agents[0].state[:7]
         np.testing.assert_array_almost_equal(restored_state, captured_state, decimal=5)
 
+    def test_round_trip_full_9_state_preservation(self):
+        """Full 9-wide round trip: run -> capture all 9 -> reset(9-wide) -> all 9 match.
+
+        This is the sysid/replay use case — capturing wheel speeds out of a
+        running sim and re-injecting them so the next rollout starts from the
+        exact same dynamical state, not a no-slip approximation of it.
+        """
+        self.env.reset()
+        for _ in range(10):
+            action = self.env.action_space.sample()
+            self.env.step(action)
+
+        captured_state = self.env.unwrapped.sim.agents[0].state[:9].copy()
+
+        self.env.reset(options={"states": captured_state.reshape(1, -1)})
+
+        restored_state = self.env.unwrapped.sim.agents[0].state[:9]
+        np.testing.assert_array_almost_equal(restored_state, captured_state, decimal=5)
+
 
 class TestInternalBookkeeping(unittest.TestCase):
     """Tests for internal state bookkeeping after full state reset."""
 
-    def setUp(self):
-        """Create test environment with STD model."""
-        self.env = gym.make(
+    @classmethod
+    def setUpClass(cls):
+        """Create test environment with STD model (shared across all tests)."""
+        cls.env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
@@ -666,9 +679,10 @@ class TestInternalBookkeeping(unittest.TestCase):
             },
         )
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
         """Clean up environment."""
-        self.env.close()
+        cls.env.close()
 
     def test_start_positions_extracted_from_states(self):
         """Test that start_xs, start_ys, start_thetas are correctly extracted from states."""
@@ -685,9 +699,10 @@ class TestInternalBookkeeping(unittest.TestCase):
 class TestSkipIntegration(unittest.TestCase):
     """Tests for skip_integration parameter in step() method."""
 
-    def setUp(self):
-        """Create test environment with STD model."""
-        self.env = gym.make(
+    @classmethod
+    def setUpClass(cls):
+        """Create test environment with STD model (shared across all tests)."""
+        cls.env = gym.make(
             "gymkhana:gymkhana-v0",
             config={
                 "map": "Spielberg",
@@ -700,9 +715,10 @@ class TestSkipIntegration(unittest.TestCase):
             },
         )
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(cls):
         """Clean up environment."""
-        self.env.close()
+        cls.env.close()
 
     def test_step_with_skip_integration_false_modifies_state(self):
         """Test that step() with skip_integration=False modifies the agent state."""
@@ -755,6 +771,65 @@ class TestSkipIntegration(unittest.TestCase):
             decimal=5,
             err_msg="State should NOT be modified when skip_integration=True",
         )
+
+
+class TestNonStdFullStateReset(unittest.TestCase):
+    """Full-state reset for KS / ST / STP. STD coverage lives in TestFullStateReset.
+
+    Multi-agent + wrong-num-agents paths are model-independent and already
+    covered by the existing STD tests; the rejection-side check here uses ST.
+    """
+
+    def test_full_state_reset_supported_models(self):
+        """Every supported non-STD model accepts a row of its expected width."""
+        cases = [
+            ("ks", np.array([1.0, 2.0, 0.1, 4.0, np.pi / 4]), None),
+            ("st", np.array([1.0, 2.0, 0.1, 4.0, np.pi / 4, 0.3, 0.05]), None),
+            ("stp", np.array([1.0, 2.0, 0.1, 4.0, np.pi / 4, 0.3, 0.05]), GKEnv.f1tenth_stp_vehicle_params()),
+        ]
+        for model, row, params in cases:
+            with self.subTest(model=model):
+                config = {
+                    "map": "Spielberg",
+                    "num_agents": 1,
+                    "model": model,
+                    "observation_config": {"type": None},
+                    "reset_config": {"type": "rl_random_static"},
+                }
+                if params is not None:
+                    config["params"] = params
+                env = gym.make("gymkhana:gymkhana-v0", config=config)
+                try:
+                    env.reset(options={"states": row.reshape(1, -1)})
+                    state = env.unwrapped.sim.agents[0].state
+                    np.testing.assert_array_almost_equal(state, row, decimal=5)
+                finally:
+                    env.close()
+
+    def test_full_state_wrong_width_rejected(self):
+        """Wrong row width raises ValueError. ST chosen as a representative.
+
+        Includes width 9 — that width is only valid for STD; ST must still
+        reject it so the STD-specific 9-wide acceptance doesn't leak across
+        models.
+        """
+        env = gym.make(
+            "gymkhana:gymkhana-v0",
+            config={
+                "map": "Spielberg",
+                "num_agents": 1,
+                "model": "st",
+                "observation_config": {"type": None},
+                "reset_config": {"type": "rl_random_static"},
+            },
+        )
+        try:
+            with self.assertRaises(ValueError):
+                env.reset(options={"states": np.zeros((1, 5))})  # ST expects 7
+            with self.assertRaises(ValueError):
+                env.reset(options={"states": np.zeros((1, 9))})  # 9 is STD-only
+        finally:
+            env.close()
 
 
 if __name__ == "__main__":

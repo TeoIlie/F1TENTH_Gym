@@ -20,11 +20,13 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""
+"""Main Gymnasium environment for Gym-Khana autonomous racing simulation.
+
 Authors: Hongrui Zheng, Teodor Ilie
 """
 
 # gym imports
+import copy
 import warnings
 
 import gymnasium as gym
@@ -38,46 +40,127 @@ from .action import CarAction, from_single_to_multi_action_space
 from .base_classes import DynamicModel, Simulator
 from .integrator import IntegratorType
 from .observation import observation_factory
+from .params import load_params
 from .rendering import make_renderer
 from .reset import make_reset_fn
 from .track import Track
 from .utils import deep_update
 
+# Params forbidden in `domain_randomization`, mapped to the canonical partner
+# the user should randomize instead: lr tracks lf (preserve wheelbase);
+# s_min/sv_min mirror s_max/sv_max.
+_DR_FORBIDDEN_PARAMS = {"lr": "lf", "s_min": "s_max", "sv_min": "sv_max"}
+_DR_SIGMA_MIN = 0.0
+_DR_SIGMA_MAX = 0.2
+
+
+def print_obs_min_max_stats(tracker, step_count, features, bounds, normalize_obs):
+    """Print a table of recorded observation min/max values.
+
+    Pure function — reused by ``GKEnv._print_obs_min_max_stats`` (standalone)
+    and by ``train.train_utils.aggregate_and_print_obs_min_max`` (parallelized).
+    Theoretical-bound columns render ``N/A`` for features missing from ``bounds``.
+    """
+    TABLE_WIDTH = 120
+    FEATURE_WIDTH = 25
+    OBS_WIDTH = 12
+    NA = "N/A"
+
+    # Print header
+    print("\n" + "=" * TABLE_WIDTH)
+    print("Observation Min/Max Statistics")
+    print(f"Tracked over {step_count:,} timesteps")
+    if normalize_obs:
+        print("Normalization: ENABLED   (theoretical bounds are the active scaling targets)")
+    else:
+        print("Normalization: DISABLED  (theoretical bounds not computed)")
+    print("=" * TABLE_WIDTH)
+    print(
+        f"{'Feature':<{FEATURE_WIDTH}} | {'Rec. Min':>{OBS_WIDTH}} | {'Rec. Max':>{OBS_WIDTH}} | {'Theor. Min':>{OBS_WIDTH}} | {'Theor. Max':>{OBS_WIDTH}} | {'Coverage':>{OBS_WIDTH}}"
+    )
+    print("-" * TABLE_WIDTH)
+
+    bounds_violations = []
+
+    for feature_name in features:
+        # Get recorded min/max values
+        rec_min = tracker[feature_name]["min"]
+        rec_max = tracker[feature_name]["max"]
+
+        # Handle case where no valid values were recorded
+        if rec_min == float("inf") or rec_max == float("-inf"):
+            print(
+                f"{feature_name:<{FEATURE_WIDTH}} | {NA:>{OBS_WIDTH}} | {NA:>{OBS_WIDTH}} | {NA:>{OBS_WIDTH}} | {NA:>{OBS_WIDTH}} | {NA:>{OBS_WIDTH}}"
+            )
+            continue
+
+        theor_bounds = bounds.get(feature_name)
+        if theor_bounds is not None:
+            theor_min, theor_max = theor_bounds
+
+            # Calculate coverage
+            theor_range = theor_max - theor_min
+            rec_range = rec_max - rec_min
+            coverage_str = f"{(rec_range / theor_range) * 100.0:6.1f}%" if theor_range > 0 else NA
+
+            # Check for violations
+            exceeds = ""
+            eps = 1e-4
+            if rec_min < theor_min - eps or rec_max > theor_max + eps:
+                bounds_violations.append(feature_name)
+                exceeds = " ⚠️"
+
+            print(
+                f"{feature_name:<{FEATURE_WIDTH}} | {rec_min:12.4f} | {rec_max:12.4f} | {theor_min:12.4f} | {theor_max:12.4f} | {coverage_str:>{OBS_WIDTH}}{exceeds}"
+            )
+        else:
+            # Theoretical bounds not available for this feature
+            print(
+                f"{feature_name:<{FEATURE_WIDTH}} | {rec_min:12.4f} | {rec_max:12.4f} | {NA:>{OBS_WIDTH}} | {NA:>{OBS_WIDTH}} | {NA:>{OBS_WIDTH}}"
+            )
+
+    print("=" * TABLE_WIDTH)
+
+    if bounds_violations:
+        print("⚠️  WARNING: The following features exceeded theoretical bounds:")
+        for feature_name in bounds_violations:
+            print(f"    - {feature_name}")
+        print("   Consider updating normalization bounds in calculate_norm_bounds()")
+        print("=" * TABLE_WIDTH)
+
+    print()
+
 
 class GKEnv(gym.Env):
-    """
-    Gymnasium environment for Gym-Khana. For API specs, see https://gymnasium.farama.org/api/env/#
+    """Gymnasium environment for Gym-Khana autonomous racing.
+
+    Implements the standard Gymnasium ``Env`` interface. Create via::
+
+        env = gym.make('gymkhana:gymkhana-v0', config={...})
+
+    Configuration is passed as a dict to ``__init__`` and merged with defaults
+    from :meth:`default_config`. See that method for all available keys and
+    their defaults. Vehicle physics parameters are documented in
+    :mod:`gymkhana.envs.dynamic_models`; preset parameter dicts are available
+    via :meth:`f1tenth_vehicle_params`, :meth:`f1tenth_std_vehicle_params`, etc.
 
     Args:
-        kwargs:
-            seed (int, default=12345): seed for random state and reproducibility
-            map (str, default='vegas'): name of the map used for the environment.
+        config: Configuration dict merged with :meth:`default_config`.
+            Key configuration options:
 
-            params (dict, default={'mu': 1.0489, 'C_Sf':, 'C_Sr':, 'lf': 0.15875, 'lr': 0.17145, 'h': 0.074, 'm': 3.74, 'I': 0.04712, 's_min': -0.4189, 's_max': 0.4189, 'sv_min': -3.2, 'sv_max': 3.2, 'v_switch':7.319, 'a_max': 9.51, 'v_min':-5.0, 'v_max': 20.0, 'width': 0.31, 'length': 0.58}): dictionary of vehicle parameters.
-            mu: surface friction coefficient
-            C_Sf: Cornering stiffness coefficient, front
-            C_Sr: Cornering stiffness coefficient, rear
-            lf: Distance from center of gravity to front axle
-            lr: Distance from center of gravity to rear axle
-            h: Height of center of gravity
-            m: Total mass of the vehicle
-            I: Moment of inertial of the entire vehicle about the z axis
-            s_min: Minimum steering angle constraint
-            s_max: Maximum steering angle constraint
-            sv_min: Minimum steering velocity constraint
-            sv_max: Maximum steering velocity constraint
-            v_switch: Switching velocity (velocity at which the acceleration is no longer able to create wheel spin)
-            a_max: Maximum longitudinal acceleration
-            v_min: Minimum longitudinal velocity
-            v_max: Maximum longitudinal velocity
-            width: width of the vehicle in meters
-            length: length of the vehicle in meters
-
-            num_agents (int, default=2): number of agents in the environment
-
-            timestep (float, default=0.01): physics timestep
-
-            ego_idx (int, default=0): ego's index in list of agents
+            - ``map`` (str): Track name (default ``"Spielberg"``).
+            - ``params`` (dict): Vehicle parameters (default F1TENTH ST params).
+            - ``model`` (str): Dynamics model — ``"ks"``, ``"st"``, ``"mb"``, ``"std"`` (default ``"st"``).
+            - ``num_agents`` (int): Number of agents (default ``2``).
+            - ``timestep`` (float): Physics timestep in seconds (default ``0.01``).
+            - ``ego_idx`` (int): Index of the ego agent (default ``0``).
+            - ``control_input`` (list): Action types, e.g. ``["speed", "steering_angle"]``.
+            - ``observation_config`` (dict): Observation type config, e.g. ``{"type": "drift"}``.
+            - ``normalize_obs`` (bool | None): Observation normalisation; ``None`` = auto.
+            - ``normalize_act`` (bool): Action normalisation (default ``True``).
+            - ``training_mode`` (str): ``"race"`` or ``"recover"`` (default ``"race"``).
+            - ``predictive_collision`` (bool): TTC-based (True) or Frenet-based (False) collision.
+        render_mode: Gymnasium render mode (``"human"``, ``"human_fast"``, ``"rgb_array"``).
     """
 
     # NOTE: change matadata with default rendering-modes, add definition of render_fps
@@ -92,14 +175,24 @@ class GKEnv(gym.Env):
 
         self.seed = self.config["seed"]
         self.params = self.config["params"]
+
+        # Immutable baseline that the DR loop in reset() perturbs off of.
+        self._base_params = copy.deepcopy(self.params)
+        self.dr_sigmas = self.config.get("domain_randomization") or {}
+        self.dr_clip_k = self.config["dr_clip_k"]
+        self._validate_dr_config()
         self.num_agents = self.config["num_agents"]
         self.timestep = self.config["timestep"]
         self.ego_idx = self.config["ego_idx"]
+        # Per-step Frenet cache, (num_agents, 3): [s, ey, ephi]. Populated each step in _update_frenet_cache.
+        self._frenet_cache = np.zeros((self.num_agents, 3), dtype=np.float64)
         self.integrator = IntegratorType.from_string(self.config["integrator"])
         self.model = DynamicModel.from_string(self.config["model"])
         self.observation_config = self.config["observation_config"]
         self.normalize_act = self.config["normalize_act"]
-        self.action_type = CarAction(self.config["control_input"], params=self.params, normalize=self.normalize_act)
+        self.action_type = CarAction(
+            self.config["control_input"], params=self.params, normalize=self.normalize_act, timestep=self.timestep
+        )
         self.num_beams = self.config["num_beams"]
 
         # training mode
@@ -142,7 +235,6 @@ class GKEnv(gym.Env):
                 self.recovery_r_range = self.config["recovery_r_range"]
 
                 # set reward parameters
-                self.recovery_euclid_gain = self.config["recovery_euclid_gain"]
                 self.recovery_timestep_penalty = self.config["recovery_timestep_penalty"]
                 self.recovery_success_reward = self.config["recovery_success_reward"]
                 self.recovery_collision_penalty = self.config["recovery_collision_penalty"]
@@ -175,6 +267,18 @@ class GKEnv(gym.Env):
         self.sparse_width_obs = self.config["sparse_width_obs"]
         self.debug_frenet_projection = self.config["debug_frenet_projection"]
         self.record_obs_min_max = self.config["record_obs_min_max"]
+
+        # integration-instability detection: when enabled, RaceCar runs sanity
+        # checks on the post-RK4 state, reverts on blow-up, and the env truncates
+        self.prevent_instability = self.config["prevent_instability"]
+        self.instability_bounds = {
+            "yaw_rate": self.config["instability_yaw_rate_bound"],
+            "slip": self.config["instability_slip_bound"],
+        }
+
+        # cumulative count of instability-truncation events; aggregated to wandb
+        # by InstabilityCountCallback and printed at end-of-run
+        self._instability_count = 0
 
         # reward params
         self.out_of_bounds_penalty = self.config["out_of_bounds_penalty"]
@@ -244,6 +348,8 @@ class GKEnv(gym.Env):
             model=self.model,
             action_type=self.action_type,
             num_beams=self.num_beams,
+            prevent_instability=self.prevent_instability,
+            instability_bounds=self.instability_bounds,
         )
         self.sim.set_map(self.map, self.config["scale"])
 
@@ -271,23 +377,31 @@ class GKEnv(gym.Env):
         obs_type = self.observation_config["type"]
 
         # Validate drift observation requires STD model
-        if obs_type == "drift" and self.model != DynamicModel.STD:
+        if obs_type in ("drift", "drift_real") and self.model != DynamicModel.STD:
             raise ValueError(
-                "The 'drift' observation type requires the single_track_drift (STD) model. "
+                f"The '{obs_type}' observation type requires the single_track_drift (STD) model. "
                 f"Current model: {self.model}. "
                 "Please set model='std' (or model=DynamicModel.STD) when creating the environment."
+            )
+
+        # Validate drift_st observation requires ST or STP model
+        if obs_type == "drift_st" and self.model not in [DynamicModel.ST, DynamicModel.STP]:
+            raise ValueError(
+                "The 'drift_st' observation type requires the single_track (ST) or single_track_pacejka (STP) model. "
+                f"Current model: {self.model}. "
+                "Please set model='st' or 'stp' (or model=DynamicModel.ST, model=DynamicModel.STP) when creating the environment."
             )
 
         # Handle normalization configuration
         normalize_obs = self.config["normalize_obs"]
 
         # Identify whether the chosen observation type is supported for normalization
-        supported_obs_types = ["drift", "race", "frenet"]
+        supported_obs_types = ["drift", "drift_real", "race", "frenet", "drift_st"]
         obs_norm_supported = obs_type in supported_obs_types
 
         if normalize_obs is None:
             # User did not set normalize - auto-set based on observation type
-            # Default to True for observation types that support normalization (drift, race, frenet, etc.)
+            # Default to True for observation types that support normalization (drift, race, etc.)
             self.normalize_obs = obs_norm_supported
         else:
             # User explicitly set normalize
@@ -314,31 +428,11 @@ class GKEnv(gym.Env):
         self.observation_type = observation_factory(env=self, **self.observation_config)
         self.observation_space = self.observation_type.space()
 
-        # Initialize observation min/max tracking if requested
-
-        # If user requests observation min/max tracking, check it is allowed
+        # Initialize observation min/max tracking if requested.
         if self.record_obs_min_max:
-            if not obs_norm_supported:
-                warnings.warn(
-                    f"Observation min/max tracking only supported for {supported_obs_types} observation types, not '{obs_type}'. "
-                    "Setting record_obs_min_max=False.",
-                    UserWarning,
-                )
-                self.record_obs_min_max = False
-            if not self.normalize_obs:
-                warnings.warn(
-                    "Observation min/max tracking only supported if 'normalize_obs' is True. "
-                    "Setting record_obs_min_max=False.",
-                    UserWarning,
-                )
-                self.record_obs_min_max = False
-
-        # Set up obs tracking if requested by user and allowed
-        if self.record_obs_min_max:
-            self.obs_min_max_tracker = {}
-            for feature in self.observation_type.features:
-                self.obs_min_max_tracker[feature] = {"min": float("inf"), "max": float("-inf")}
-            self.record_obs_min_max = True
+            self.obs_min_max_tracker = {
+                feature: {"min": float("inf"), "max": float("-inf")} for feature in self.observation_type.features
+            }
             self.obs_tracker_step_count = 0
 
         # action space
@@ -362,6 +456,7 @@ class GKEnv(gym.Env):
             agent_ids=self.agent_ids,
             render_mode=render_mode,
             render_fps=self.metadata["render_fps"],
+            render_config=self.config.get("render_config"),
         )
 
         # automatically add track line rendering callback if configured
@@ -384,24 +479,15 @@ class GKEnv(gym.Env):
             self.add_render_callback(self.track.render_frenet_projection)
 
     def _render_lookahead_curvatures_callback(self, e) -> None:
-        """
-        Render callback for lookahead curvature visualization.
+        """Render callback for lookahead curvature visualisation.
 
-        This method is called during rendering to display the lookahead
-        curvature sampling points ahead of the ego vehicle on the centerline.
-        Visualizes the points where curvature is sampled for drift control.
+        Called during :meth:`render` to display the lookahead curvature
+        sampling points ahead of the ego vehicle on the centerline.
+        Uses ``lookahead_n_points`` and ``lookahead_ds`` from config.
+        Silently skips on errors to avoid breaking rendering.
 
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object
-
-        Notes
-        -----
-        - Only executed when env.render() is called, not during env.step() - confirmed this!
-        - Silently skips on errors to avoid breaking rendering
-        - Uses config parameters: lookahead_n_points, lookahead_ds
-        - Maintains its own s_guess cache for accurate Frenet conversion
+        Args:
+            e: Environment renderer object.
         """
         try:
             # Get ego agent state
@@ -421,312 +507,82 @@ class GKEnv(gym.Env):
 
     @classmethod
     def fullscale_vehicle_params(cls) -> dict:
+        """Return full-scale vehicle parameters from CommonRoad.
+
+        Copied as-is from ``commonroad-vehicle-models/PYTHON/vehiclemodels/parameters/parameters_vehicle1.yaml``.
+
+        Returns:
+            Complete parameter dictionary for a full-scale vehicle (ST/MB/STD models).
         """
-        This is copied as-is from commonroad-vehicle-models/PYTHON/vehiclemodels/parameters/parameters_vehicle1.yaml
-        """
-        params = {
-            "mu": 1.0489,
-            "C_Sf": 4.718,
-            "C_Sr": 5.4562,
-            "lf": 0.88392,
-            "lr": 1.50876,
-            "h": 0.074,
-            "m": 1225.8878467253344,
-            "I": 1538.8533713561394,
-            "width": 1.674,
-            "length": 4.298,
-            # steering constraints
-            "s_min": -0.91,
-            "s_max": 0.91,
-            "sv_min": -0.4,
-            "sv_max": 0.4,
-            # maximum curvature change
-            "kappa_dot_max": 0.4,
-            # maximum curvature rate rate
-            "kappa_dot_dot_max": 20,
-            # Longitudinal constraints
-            "v_switch": 4.755,
-            "a_max": 11.5,
-            "v_min": -13.9,
-            "v_max": 45.8,
-            # maximum longitudinal jerk [m/s^3]
-            "j_max": 10.0e3,
-            # maximum longitudinal jerk change [m/s^4]
-            "j_dot_max": 10.0e3,
-            # Extra parameters (for future use in multibody simulation)
-            # sprung mass [kg]  SMASS
-            "m_s": 1094.542720290477,
-            # unsprung mass front [kg]  UMASSF
-            "m_uf": 65.67256321742863,
-            # unsprung mass rear [kg]  UMASSR
-            "m_ur": 65.67256321742863,
-            # moments of inertia of sprung mass
-            # moment of inertia for sprung mass in roll [kg m^2]  IXS
-            "I_Phi_s": 244.04723069965206,
-            # moment of inertia for sprung mass in pitch [kg m^2]  IYS
-            "I_y_s": 1342.2597688480864,
-            # moment of inertia for sprung mass in yaw [kg m^2]  IZZ
-            "I_z": 1538.8533713561394,
-            # moment of inertia cross product [kg m^2]  IXZ
-            "I_xz_s": 0.0,
-            # suspension parameters
-            # suspension spring rate (front) [N/m]  KSF
-            "K_sf": 21898.332429625985,
-            # suspension damping rate (front) [N s/m]  KSDF
-            "K_sdf": 1459.3902937206362,
-            # suspension spring rate (rear) [N/m]  KSR
-            "K_sr": 21898.332429625985,
-            # suspension damping rate (rear) [N s/m]  KSDR
-            "K_sdr": 1459.3902937206362,
-            # geometric parameters
-            # track width front [m]  TRWF
-            "T_f": 1.389888,
-            # track width rear [m]  TRWB
-            "T_r": 1.423416,
-            # lateral spring rate at compliant compliant pin joint between M_s and M_u [N/m]  KRAS
-            "K_ras": 175186.65943700788,
-            # auxiliary torsion roll stiffness per axle (normally negative) (front) [N m/rad]  KTSF
-            "K_tsf": -12880.270509148304,
-            # auxiliary torsion roll stiffness per axle (normally negative) (rear) [N m/rad]  KTSR
-            "K_tsr": 0.0,
-            # damping rate at compliant compliant pin joint between M_s and M_u [N s/m]  KRADP
-            "K_rad": 10215.732056044453,
-            # vertical spring rate of tire [N/m]  KZT
-            "K_zt": 189785.5477234252,
-            # center of gravity height of total mass [m]  HCG (mainly required for conversion to other vehicle models)
-            "h_cg": 0.5577840000000001,
-            # height of roll axis above ground (front) [m]  HRAF
-            "h_raf": 0.0,
-            # height of roll axis above ground (rear) [m]  HRAR
-            "h_rar": 0.0,
-            # M_s center of gravity above ground [m]  HS
-            "h_s": 0.59436,
-            # moment of inertia for unsprung mass about x-axis (front) [kg m^2]  IXUF
-            "I_uf": 32.53963075995361,
-            # moment of inertia for unsprung mass about x-axis (rear) [kg m^2]  IXUR
-            "I_ur": 32.53963075995361,
-            # wheel inertia, from internet forum for 235/65 R 17 [kg m^2]
-            "I_y_w": 1.7,
-            # lateral compliance rate of tire, wheel, and suspension, per tire [m/N]  KLT
-            "K_lt": 1.0278264878518764e-05,
-            # effective wheel/tire radius  chosen as tire rolling radius RR  taken from ADAMS documentation [m]
-            "R_w": 0.344,
-            # split of brake and engine torque
-            "T_sb": 0.76,
-            "T_se": 1,
-            # suspension parameters
-            # [rad/m]  DF
-            "D_f": -0.6233595800524934,
-            # [rad/m]  DR
-            "D_r": -0.20997375328083986,
-            # [needs conversion if nonzero]  EF
-            "E_f": 0,
-            # [needs conversion if nonzero]  ER
-            "E_r": 0,
-            # tire parameters from ADAMS handbook
-            # longitudinal coefficients
-            "tire_p_cx1": 1.6411,  # Shape factor Cfx for longitudinal force
-            "tire_p_dx1": 1.1739,  # Longitudinal friction Mux at Fznom
-            "tire_p_dx3": 0,  # Variation of friction Mux with camber
-            "tire_p_ex1": 0.46403,  # Longitudinal curvature Efx at Fznom
-            "tire_p_kx1": 22.303,  # Longitudinal slip stiffness Kfx/Fz at Fznom
-            "tire_p_hx1": 0.0012297,  # Horizontal shift Shx at Fznom
-            "tire_p_vx1": -8.8098e-006,  # Vertical shift Svx/Fz at Fznom
-            "tire_r_bx1": 13.276,  # Slope factor for combined slip Fx reduction
-            "tire_r_bx2": -13.778,  # Variation of slope Fx reduction with kappa
-            "tire_r_cx1": 1.2568,  # Shape factor for combined slip Fx reduction
-            "tire_r_ex1": 0.65225,  # Curvature factor of combined Fx
-            "tire_r_hx1": 0.0050722,  # Shift factor for combined slip Fx reduction
-            # lateral coefficients
-            "tire_p_cy1": 1.3507,  # Shape factor Cfy for lateral forces
-            "tire_p_dy1": 1.0489,  # Lateral friction Muy
-            "tire_p_dy3": -2.8821,  # Variation of friction Muy with squared camber
-            "tire_p_ey1": -0.0074722,  # Lateral curvature Efy at Fznom
-            "tire_p_ky1": -21.92,  # Maximum value of stiffness Kfy/Fznom
-            "tire_p_hy1": 0.0026747,  # Horizontal shift Shy at Fznom
-            "tire_p_hy3": 0.031415,  # Variation of shift Shy with camber
-            "tire_p_vy1": 0.037318,  # Vertical shift in Svy/Fz at Fznom
-            "tire_p_vy3": -0.32931,  # Variation of shift Svy/Fz with camber
-            "tire_r_by1": 7.1433,  # Slope factor for combined Fy reduction
-            "tire_r_by2": 9.1916,  # Variation of slope Fy reduction with alpha
-            "tire_r_by3": -0.027856,  # Shift term for alpha in slope Fy reduction
-            "tire_r_cy1": 1.0719,  # Shape factor for combined Fy reduction
-            "tire_r_ey1": -0.27572,  # Curvature factor of combined Fy
-            "tire_r_hy1": 5.7448e-006,  # Shift factor for combined Fy reduction
-            "tire_r_vy1": -0.027825,  # Kappa induced side force Svyk/Muy*Fz at Fznom
-            "tire_r_vy3": -0.27568,  # Variation of Svyk/Muy*Fz with camber
-            "tire_r_vy4": 12.12,  # Variation of Svyk/Muy*Fz with alpha
-            "tire_r_vy5": 1.9,  # Variation of Svyk/Muy*Fz with kappa
-            "tire_r_vy6": -10.704,  # Variation of Svyk/Muy*Fz with atan(kappa)
-        }
-        return params
+        return load_params("fullscale")
 
     @classmethod
     def f1fifth_vehicle_params(cls) -> dict:
-        params = {
-            "mu": 1.1,
-            "C_Sf": 5.3507,
-            "C_Sr": 5.3507,
-            "lf": 0.2725,
-            "lr": 0.2585,
-            "h": 0.1825,
-            "m": 15.32,
-            "I": 0.64332,
-            "s_min": -0.4189,
-            "s_max": 0.4189,
-            "sv_min": -3.2,
-            "sv_max": 3.2,
-            "v_switch": 7.319,
-            "a_max": 9.51,
-            "v_min": -5.0,
-            "v_max": 20.0,
-            "width": 0.55,
-            "length": 0.8,
-        }
-        return params
+        """Return default parameters for the 1/5th scale F1FIFTH car (ST model).
+
+        Returns:
+            Parameter dictionary for ST/KS models.
+        """
+        return load_params("f1fifth")
 
     @classmethod
     def f1tenth_vehicle_params(cls) -> dict:
+        """Return default parameters for the 1/10th scale F1TENTH car (ST model).
+
+        Returns:
+            Parameter dictionary for ST/KS models.
         """
-        Default parameters.
-        """
-        params = {
-            "mu": 1.0489,
-            "C_Sf": 4.718,
-            "C_Sr": 5.4562,
-            "lf": 0.15875,
-            "lr": 0.17145,
-            "h": 0.074,
-            "m": 3.74,
-            "I": 0.04712,
-            "s_min": -0.4189,
-            "s_max": 0.4189,
-            "sv_min": -3.2,
-            "sv_max": 3.2,
-            "v_switch": 7.319,
-            "a_max": 9.51,
-            "v_min": -5.0,
-            "v_max": 20.0,
-            "width": 0.31,
-            "length": 0.58,
-        }
-        return params
+        return load_params("f1tenth_st")
 
     @classmethod
     def f1tenth_std_drift_bias_params(cls) -> dict:
-        """
-        Returns params for Single Track Drift (STD) model with drift bias.
+        """Return STD model parameters tuned for increased drift tendency.
+
+        Extends :meth:`f1tenth_std_vehicle_params` with adjusted CoG, reduced
+        ``a_max``, softer lateral tyre stiffness, and rear-wheel-drive torque split.
 
         Returns:
-            dict: Parameter dictionary with drift bias for STD model
+            Parameter dictionary for the STD model with drift bias.
         """
-        params = cls.f1tenth_std_vehicle_params().copy()
-
-        # Overwrite specific params
-        params["lf"] = 0.19812  # originally 0.15875 to promote rear weight bias
-        params["lr"] = 0.13208  # originally 0.17145 to promote rear weight bias
-        params["a_max"] = 7.0  # originally 9.51 (greater than 5.0 to allow more wheelspin)
-        params["tire_p_dy1"] = 1.0  # adjusted from original 1.101 for more oversteer
-        params["tire_p_ky1"] = -50.0  # adjusted from original -65.76 for more oversteer
-        params["T_se"] = 0.0  # adjusted from original 0.5 to simulate RWD
-
-        return params
+        return load_params("f1tenth_std_drift_bias")
 
     @classmethod
     def f1tenth_std_vehicle_params(cls) -> dict:
-        """
-        Returns default parameters for Single Track Drift (STD) model.
-        Extends standard F1TENTH parameters with wheel dynamics and Pacejka tire model.
+        """Return default parameters for the 1/10th scale F1TENTH car (STD model).
+
+        Extends the standard F1TENTH parameters with wheel dynamics (``R_w``,
+        ``I_y_w``) and the full PAC2002 (Pacejka Magic Formula) tyre coefficient
+        set, adapted from full-scale values. See ``gymkhana/envs/params/f1tenth_std.yaml``
+        for values and derivation notes.
 
         Returns:
-            dict: Complete parameter dictionary for STD model
+            Complete parameter dictionary for the STD model.
         """
-        params = {
-            # =========================
-            # ORIGINAL PARAMS FROM f1tenth_vehicle_params
-            # =========================
-            "mu": 1.0489,
-            "C_Sf": 4.718,
-            "C_Sr": 5.4562,
-            "lf": 0.15875,
-            "lr": 0.17145,
-            "h": 0.074,
-            "m": 3.74,
-            "I_z": 0.04712,  # moment of inertia for sprung mass in yaw [kg m^2]
-            "s_min": -0.5,  # originally -0.4189
-            "s_max": 0.5,  # originally 0.4189
-            "sv_min": -3.2,
-            "sv_max": 3.2,
-            "v_switch": 7.319,
-            "a_max": 5.0,  # originally 9.51
-            "v_min": -5.0,
-            "v_max": 20.0,
-            "width": 0.31,
-            "length": 0.58,
-            # =========================
-            # NEW PARAMS
-            # =========================
-            # 1. New params copied from multi-body config
-            # =========================
-            # tire parameters from ADAMS handbook
-            # longitudinal coefficients
-            "tire_p_cx1": 1.6411,  # Shape factor Cfx for longitudinal force
-            "tire_p_dx1": 1.23,  # Longitudinal friction Mux at Fznom
-            "tire_p_dx3": 0,  # Variation of friction Mux with camber
-            "tire_p_ex1": 0.46403,  # Longitudinal curvature Efx at Fznom
-            "tire_p_kx1": 66.909,  # Longitudinal slip stiffness Kfx/Fz at Fznom
-            "tire_p_hx1": 0.0012297,  # Horizontal shift Shx at Fznom
-            "tire_p_vx1": -8.8098e-006,  # Vertical shift Svx/Fz at Fznom
-            "tire_r_bx1": 13.276,  # Slope factor for combined slip Fx reduction
-            "tire_r_bx2": -13.778,  # Variation of slope Fx reduction with kappa
-            "tire_r_cx1": 1.2568,  # Shape factor for combined slip Fx reduction
-            "tire_r_ex1": 0.65225,  # Curvature factor of combined Fx
-            "tire_r_hx1": 0.0050722,  # Shift factor for combined slip Fx reduction
-            # lateral coefficients
-            "tire_p_cy1": 1.3507,  # Shape factor Cfy for lateral forces
-            "tire_p_dy1": 1.101,  # Lateral friction Muy
-            "tire_p_dy3": -2.8821,  # Variation of friction Muy with squared camber
-            "tire_p_ey1": -0.0074722,  # Lateral curvature Efy at Fznom
-            "tire_p_ky1": -65.76,  # Maximum value of stiffness Kfy/Fznom
-            "tire_p_hy1": 0.0026747,  # Horizontal shift Shy at Fznom
-            "tire_p_hy3": 0.031415,  # Variation of shift Shy with camber
-            "tire_p_vy1": 0.037318,  # Vertical shift in Svy/Fz at Fznom
-            "tire_p_vy3": -0.32931,  # Variation of shift Svy/Fz with camber
-            "tire_r_by1": 7.1433,  # Slope factor for combined Fy reduction
-            "tire_r_by2": 9.1916,  # Variation of slope Fy reduction with alpha
-            "tire_r_by3": -0.027856,  # Shift term for alpha in slope Fy reduction
-            "tire_r_cy1": 1.0719,  # Shape factor for combined Fy reduction
-            "tire_r_ey1": -0.27572,  # Curvature factor of combined Fy
-            "tire_r_hy1": 5.7448e-006,  # Shift factor for combined Fy reduction
-            "tire_r_vy1": -0.027825,  # Kappa induced side force Svyk/Muy*Fz at Fznom
-            "tire_r_vy3": -0.27568,  # Variation of Svyk/Muy*Fz with camber
-            "tire_r_vy4": 12.12,  # Variation of Svyk/Muy*Fz with alpha
-            "tire_r_vy5": 1.9,  # Variation of Svyk/Muy*Fz with kappa
-            "tire_r_vy6": -10.704,  # Variation of Svyk/Muy*Fz with atan(kappa)
-            # =========================
-            # 2. New params modified for 1/10 scale
-            # =========================
-            "h_s": 0.074,  # height of center of gravity [m], copied from ETH simulator
-            "R_w": 0.049,  # effective tire radius [m] estimated by me to be 49 mm which is 0.049 m
-            "I_y_w": 0.00017,  # wheel inertia in [kg m^2], approximated by me using I = 1/2 * m * r^2, where m = 107.5g and r = 50 mm
-            # split of brake and engine torque
-            "T_sb": 0.5,  # torque split of brakes (percent of torque sent to front axle) [no units] - I'm assuming it's even front/back
-            "T_se": 0.5,  # torque split of engine (percent of torque sent to front axle) [no units] - For AWD I'm assuming it's even front/back
-        }
-        return params
+        return load_params("f1tenth_std")
+
+    @classmethod
+    def f1tenth_stp_vehicle_params(cls) -> dict:
+        """Return default parameters for the 1/10th scale F1TENTH car (STP model).
+
+        Single Track Pacejka: dynamic single-track chassis with a lateral-only
+        Pacejka Magic Formula tyre model (8 coefficients, ``B_f, C_f, D_f, E_f,
+        B_r, C_r, D_r, E_r``). Coefficients are seeded from the on-track sysid
+        pipeline output (``SIM_pacejka.txt``).
+
+        Returns:
+            Complete parameter dictionary for the STP model.
+        """
+        return load_params("f1tenth_stp")
 
     @classmethod
     def default_config(cls) -> dict:
-        """
-        Default environment configuration.
+        """Return the default environment configuration dict.
 
-        Can be overloaded in environment implementations, or by calling configure().
-
-        Args:
-            None
+        All keys can be overridden by passing a partial ``config`` dict to
+        ``__init__`` or by calling :meth:`configure`.
 
         Returns:
-            a configuration dict
+            Complete default configuration dict.
         """
         return {
             "seed": 12345,
@@ -741,8 +597,10 @@ class GKEnv(gym.Env):
             "control_input": ["speed", "steering_angle"],
             "observation_config": {"type": None},
             "reset_config": {"type": None},
-            "scale": 1.0,
+            "domain_randomization": None,  # dictionary of domain randomization parameter perturbations
+            "dr_clip_k": 3.0,  # clip DR multiplier at ±k * σ; prevents extreme samples
             "num_beams": 1080,
+            "render_config": None,  # dict of overrides for rendering.yaml fields, or None to use packaged defaults
             "render_track_lines": False,
             "render_arc_length_annotations": False,
             "arc_length_annotation_interval": 2.0,
@@ -755,6 +613,9 @@ class GKEnv(gym.Env):
             "normalize_act": True,
             "predictive_collision": False,  # default Frenet-based boundary check
             "record_obs_min_max": False,
+            "prevent_instability": False,  # when True, sanity-check post-integration state and truncate on blow-up
+            "instability_yaw_rate_bound": 4 * np.pi,  # rad/s; standardized-state |yaw_rate| limit
+            "instability_slip_bound": np.pi / 2,  # rad; standardized-state |slip| limit
             "wall_deflection": False,  # default to no wall deflections
             "track_direction": "normal",  # "normal", "reverse", or "random"
             "training_mode": "race",  # "race" or "recover"
@@ -771,7 +632,6 @@ class GKEnv(gym.Env):
             "recovery_beta_range": [-0.349, 0.349],
             "recovery_r_range": [-0.785, 0.785],
             "recovery_yaw_range": [-0.785, 0.785],
-            "recovery_euclid_gain": 1.0,
             "recovery_timestep_penalty": 1.0,
             "recovery_success_reward": 100,
             "recovery_collision_penalty": -50,
@@ -785,6 +645,14 @@ class GKEnv(gym.Env):
         }
 
     def configure(self, config: dict) -> None:
+        """Merge a partial config dict into the current configuration.
+
+        Also updates the simulator and action space if they are already
+        initialised (i.e. when called after ``__init__``).
+
+        Args:
+            config: Partial configuration dict; keys are merged via deep update.
+        """
         if config:
             self.config = deep_update(self.config, config)
             self.params = self.config["params"]
@@ -796,18 +664,38 @@ class GKEnv(gym.Env):
                 # if some parameters changed, recompute action space
                 self.normalize_act = self.config["normalize_act"]
                 self.action_type = CarAction(
-                    self.config["control_input"], params=self.params, normalize=self.normalize_act
+                    self.config["control_input"],
+                    params=self.params,
+                    normalize=self.normalize_act,
+                    timestep=self.timestep,
                 )
                 self.action_space = from_single_to_multi_action_space(self.action_type.space, self.num_agents)
 
-    def _resolve_direction(self) -> None:
-        """
-        Resolve track direction based on configuration.
+    def _validate_dr_config(self) -> None:
+        """Fail fast on a malformed ``domain_randomization`` dict."""
+        for name, sigma in self.dr_sigmas.items():
+            if name not in self._base_params:
+                raise ValueError(
+                    f"domain_randomization key {name!r} is not a vehicle parameter. "
+                    f"Valid keys: {sorted(self._base_params)}"
+                )
+            canonical = _DR_FORBIDDEN_PARAMS.get(name)
+            if canonical is not None:
+                raise ValueError(
+                    f"domain_randomization key {name!r} is derived from {canonical!r}; "
+                    f"randomize {canonical!r} instead and {name!r} will be set automatically. "
+                    f"Listing both in domain_randomization is not supported."
+                )
+            if not (_DR_SIGMA_MIN < sigma < _DR_SIGMA_MAX):
+                raise ValueError(
+                    f"domain_randomization sigma for {name!r} must be in "
+                    f"({_DR_SIGMA_MIN}, {_DR_SIGMA_MAX}), got {sigma!r}"
+                )
 
-        Sets self.direction_reversed based on self.track_direction_config:
-        - "normal": False (drive forward)
-        - "reverse": True (drive backward)
-        - "random": randomly choose 50/50
+    def _resolve_direction(self) -> None:
+        """Set ``self.direction_reversed`` from ``self.track_direction_config``.
+
+        ``"normal"`` → False, ``"reverse"`` → True, ``"random"`` → 50/50 coin flip.
         """
         if self.track_direction_config == "normal":
             self.direction_reversed = False
@@ -817,27 +705,22 @@ class GKEnv(gym.Env):
             self.direction_reversed = np.random.random() < 0.5
 
     def _check_done(self):
-        """
-        Check if the current episode should end. Distinguishes between
-        natural termination (collision/boundary) and truncation (time limit).
+        """Check whether the current episode should end.
 
-        Behavior depends on training mode:
-        - Recovery (single-agent):
-            - Terminated: (Only Frenet-based) boundary exceeded OR recovery success.
-            - Truncated: max recovery episode steps exceeded, OR arc-length > recovery_s_max
-        - Race (1+ agents)
-            - Terminated:
-                - Predictive TTC: ego agent has TTC collision OR all agents complete 2 laps
-                - Frenet-based: ego agent exceeds track boundaries
-            - Truncated: When max episode steps exceeded
+        Distinguishes natural termination (collision/boundary) from truncation
+        (time limit). Behaviour depends on ``training_mode``:
 
-        Args:
-            None
+        - **Recovery** (single-agent):
+            - Terminated: boundary exceeded OR recovery success.
+            - Truncated: max steps exceeded OR arc-length > ``recovery_s_max``.
+        - **Race** (1+ agents):
+            - Terminated (TTC mode): ego TTC collision OR all agents complete 2 laps.
+            - Terminated (Frenet mode): ego agent exceeds track boundaries.
+            - Truncated: max episode steps exceeded.
 
         Returns:
-            terminated (bool): whether the episode ended due to a terminal state
-            truncated (bool): whether the episode was truncated due to time limit
-            toggle_list (list[int]): each agent's toggle list for crossing the finish zone
+            Tuple of ``(terminated, truncated, toggle_list)`` where
+            ``toggle_list`` tracks each agent's finish-zone crossing count.
         """
 
         if self.training_mode == "recover":
@@ -846,7 +729,7 @@ class GKEnv(gym.Env):
             terminated = self.boundary_exceeded[0] or self.recovery_succeeded
 
             # Truncated: arc-length exceeded OR timestep limit
-            current_s, _ = self.track.centerline.spline.calc_arclength_inaccurate(self.poses_x[0], self.poses_y[0])
+            current_s = self._frenet_cache[0, 0]
             truncated = current_s > self.recovery_s_max or self.current_step > self.max_episode_steps
             return bool(terminated), bool(truncated), False
 
@@ -891,13 +774,28 @@ class GKEnv(gym.Env):
 
             return bool(terminated), bool(truncated), self.toggle_list >= 4
 
-    def _update_state(self):
-        """
-        Update the env's states according to observations.
+    def _update_frenet_cache(self):
+        """Project every agent's pose onto the centerline once per step.
 
-        Note: When predictive_collision=False (Frenet mode), self.collisions
-        reflects simulator TTC/GJK collision state, but is unused for reset/reward.
-        Instead, self.boundary_exceeded tracks Frenet-based boundary violations.
+        ``debug=True`` fires only for the ego row to match the prior per-step
+        debug-print cadence (previously emitted from ``observe`` only).
+        """
+        poses = self.sim.agent_poses
+        for i in range(self.num_agents):
+            debug = self.debug_frenet_projection and i == self.ego_idx
+            s, ey, ephi = self.track.cartesian_to_frenet(
+                poses[i, 0], poses[i, 1], poses[i, 2], use_raceline=False, debug=debug
+            )
+            self._frenet_cache[i, 0] = s
+            self._frenet_cache[i, 1] = ey
+            self._frenet_cache[i, 2] = ephi
+
+    def _update_state(self):
+        """Update env state from the simulator after a step.
+
+        Note: when ``predictive_collision=False`` (Frenet mode), ``self.collisions``
+        reflects the simulator TTC/GJK state but is unused for reward/reset.
+        ``self.boundary_exceeded`` tracks Frenet-based boundary violations instead.
         """
         self.poses_x = self.sim.agent_poses[:, 0]
         self.poses_y = self.sim.agent_poses[:, 1]
@@ -910,128 +808,61 @@ class GKEnv(gym.Env):
                 self.boundary_exceeded[i] = self._check_boundary_frenet(i)
 
     def _update_obs_min_max(self):
-        """
-        Update observation min/max tracking with current observation values.
-        Called after each step when tracking is enabled.
-        """
+        """Update observation min/max tracker with the current step's values."""
 
         raw_features = getattr(self.observation_type, "_last_raw_features", None)
         if raw_features is None:
             return
 
+        # FeaturesObservation stores nested {agent_id: {feature: value}}.
+        # Collapse to {feature: [values across agents]} so the array branch
+        # below produces a single per-feature min/max row across all agents.
+        if raw_features and isinstance(next(iter(raw_features.values())), dict):
+            raw_features = {
+                f: [agent_obs[f] for agent_obs in raw_features.values()] for f in self.observation_type.features
+            }
+
         self.obs_tracker_step_count += 1
 
         for feature_name, feature_value in raw_features.items():
-            # Handle array-valued vs scalar features
-            if isinstance(feature_value, (list, np.ndarray)):
-                curr_min = float(np.min(feature_value))
-                curr_max = float(np.max(feature_value))
-            else:
-                curr_min = float(feature_value)
-                curr_max = float(feature_value)
+            # np.min/np.max accept scalars, lists, and ndarrays uniformly.
+            curr_min = float(np.min(feature_value))
+            curr_max = float(np.max(feature_value))
 
-            # Skip invalid values (NaN or Inf)
-            if np.isnan(curr_min) or np.isnan(curr_max) or np.isinf(curr_min) or np.isinf(curr_max):
+            if not (np.isfinite(curr_min) and np.isfinite(curr_max)):
                 continue
 
-            # Update tracker
-            if curr_min < self.obs_min_max_tracker[feature_name]["min"]:
-                self.obs_min_max_tracker[feature_name]["min"] = curr_min
-            if curr_max > self.obs_min_max_tracker[feature_name]["max"]:
-                self.obs_min_max_tracker[feature_name]["max"] = curr_max
+            entry = self.obs_min_max_tracker[feature_name]
+            entry["min"] = min(entry["min"], curr_min)
+            entry["max"] = max(entry["max"], curr_max)
 
     def _print_obs_min_max_stats(self):
-        """
-        Print observation min/max statistics at the end of training/evaluation.
-        Shows recorded values compared to theoretical normalization bounds.
-        """
-        TABLE_WIDTH = 120
-        FEATURE_WIDTH = 25
-        OBS_WIDTH = 12
-
-        # Print header
-        print("\n" + "=" * TABLE_WIDTH)
-        print("Observation Min/Max Statistics")
-        print(f"Tracked over {self.obs_tracker_step_count:,} timesteps")
-        print("=" * TABLE_WIDTH)
-        print(
-            f"{'Feature':<{FEATURE_WIDTH}} | {'Rec. Min':>{OBS_WIDTH}} | {'Rec. Max':>{OBS_WIDTH}} | {'Theor. Min':>{OBS_WIDTH}} | {'Theor. Max':>{OBS_WIDTH}} | {'Coverage':>{OBS_WIDTH}}"
+        """Print this env's tracked obs min/max table. Called from :meth:`close`."""
+        print_obs_min_max_stats(
+            tracker=self.obs_min_max_tracker,
+            step_count=self.obs_tracker_step_count,
+            features=self.observation_type.features,
+            bounds=getattr(self.observation_type, "bounds", {}) or {},
+            normalize_obs=self.normalize_obs,
         )
-        print("-" * TABLE_WIDTH)
-
-        bounds_violations = []
-
-        for feature_name in self.observation_type.features:
-            # Get recorded & theoretical min/max values
-            rec_min = self.obs_min_max_tracker[feature_name]["min"]
-            rec_max = self.obs_min_max_tracker[feature_name]["max"]
-            theor_min, theor_max = self.observation_type.bounds[feature_name]
-
-            # Handle case where no valid values were recorded
-            if rec_min == float("inf") or rec_max == float("-inf"):
-                print(
-                    f"{feature_name:<{FEATURE_WIDTH}} | {'N/A':>{OBS_WIDTH}} | {'N/A':>{OBS_WIDTH}} | {'N/A':>{OBS_WIDTH}} | {'N/A':>{OBS_WIDTH}} | {'N/A':>{OBS_WIDTH}}"
-                )
-            else:
-                # Calculate coverage
-                theor_range = theor_max - theor_min
-                rec_range = rec_max - rec_min
-                coverage_str = f"{(rec_range / theor_range) * 100.0:6.1f}%" if theor_range > 0 else "N/A"
-
-                # Check for violations
-                exceeds = ""
-                eps = 1e-4
-                if rec_min < theor_min - eps or rec_max > theor_max + eps:
-                    bounds_violations.append(feature_name)
-                    exceeds = " ⚠️"
-
-                print(
-                    f"{feature_name:<{FEATURE_WIDTH}} | {rec_min:12.4f} | {rec_max:12.4f} | {theor_min:12.4f} | {theor_max:12.4f} | {coverage_str:>{OBS_WIDTH}}{exceeds}"
-                )
-
-        print("=" * TABLE_WIDTH)
-
-        if bounds_violations:
-            print("⚠️  WARNING: The following features exceeded theoretical bounds:")
-            for feature_name in bounds_violations:
-                print(f"    - {feature_name}")
-            print("   Consider updating normalization bounds in calculate_norm_bounds()")
-            print("=" * TABLE_WIDTH)
-
-        print()
 
     def _check_boundary_frenet(self, agent_idx: int) -> bool:
-        """
-        Check if agent has exceeded track boundaries using Frenet coordinates.
+        """Check whether an agent has exceeded track boundaries using Frenet coordinates.
 
-        This method provides explicit boundary detection based on the agent's
-        lateral deviation from the centerline. Used when predictive_collision=False
-        (drift mode) to detect exact boundary crossings rather than predictive
-        TTC-based collisions.
+        Used when ``predictive_collision=False`` (drift mode) to detect exact
+        boundary crossings based on lateral deviation rather than predictive TTC.
 
         Args:
-            agent_idx (int): Index of the agent to check
+            agent_idx: Index of the agent to check.
 
         Returns:
-            bool: True if agent has exceeded track boundaries, False otherwise
+            True if the agent has exceeded track boundaries.
 
         Raises:
-            RuntimeError: If Frenet conversion fails
-            ValueError: If track boundary data is missing or invalid
+            ValueError: If track boundary data (``w_lefts``, ``w_rights``, ``ss``) is missing.
         """
-        # Get agent position
-        x = self.poses_x[agent_idx]
-        y = self.poses_y[agent_idx]
-        theta = self.poses_theta[agent_idx]
-
-        # Convert to Frenet coordinates
-        try:
-            s, ey, _ = self.track.cartesian_to_frenet(x, y, theta, use_raceline=False)
-        except Exception as e:
-            raise RuntimeError(
-                f"Frenet coordinate conversion failed for agent {agent_idx} at position ({x:.2f}, {y:.2f}). "
-                f"This is required for boundary checking with predictive_collision=False. Error: {e}"
-            ) from e
+        s = self._frenet_cache[agent_idx, 0]
+        ey = self._frenet_cache[agent_idx, 1]
 
         centerline = self.track.centerline
 
@@ -1065,10 +896,15 @@ class GKEnv(gym.Env):
         return False  # Within boundaries
 
     def _check_recovery_success(self) -> bool:
-        """
-        Check if the vehicle is in a recovered state. Defined as all 6 of:
-        delta, beta, r, d_beta, d_r, frenet_u
-        are within a threshold distance from 0. This defn is taken from a phase plane analysis
+        """Check whether the vehicle is in a recovered (stable) state.
+
+        Recovery is defined as all six quantities — ``delta``, ``beta``, ``r``,
+        ``d_beta``, ``d_r``, and ``frenet_u`` — being within their respective
+        threshold distances from zero. Thresholds are set in config. Definition
+        derived from phase-plane analysis of the drift dynamics.
+
+        Returns:
+            True if the vehicle is considered recovered.
         """
         agent = self.sim.agents[0]
         std_state = agent.standard_state
@@ -1082,9 +918,7 @@ class GKEnv(gym.Env):
         d_beta = (beta - self.prev_beta) / self.timestep
         d_r = (r - self.prev_r) / self.timestep
 
-        # Calculate heading error
-        x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
-        _, _, frenet_u = self.track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+        frenet_u = self._frenet_cache[0, 2]
 
         # Check recovery condition
         return (
@@ -1097,19 +931,14 @@ class GKEnv(gym.Env):
         )
 
     def _get_recovery_reward(self) -> float:
-        """
-        Compute recovery mode reward.
+        """Compute the reward for the current recovery-mode step.
+
+        Combines a boundary collision penalty, a recovery success bonus, and a
+        constant timestep penalty.
 
         Returns:
-            float: Total reward for this step
+            Total reward for this step.
         """
-        std_state = self.sim.agents[0].standard_state
-        beta = std_state["slip"]
-        r = std_state["yaw_rate"]
-
-        # Euclidean distance from current (beta, r) to (0, 0)
-        r_euclid = -self.recovery_euclid_gain * np.sqrt(beta**2 + r**2)
-
         # collision penalty
         r_col = self.recovery_collision_penalty if self.boundary_exceeded[0] else 0.0
 
@@ -1119,7 +948,7 @@ class GKEnv(gym.Env):
         # constant timestep penalty
         r_const = self.recovery_timestep_penalty * self.timestep
 
-        return r_euclid + r_col + r_rec - r_const
+        return r_col + r_rec - r_const
 
     def set_recovery_ranges(self, v_range, beta_range, r_range, yaw_range):
         """Set recovery initial state sampling ranges (used by curriculum learning)."""
@@ -1129,14 +958,17 @@ class GKEnv(gym.Env):
         self.recovery_yaw_range = yaw_range
 
     def _get_reward(self):
-        """
-        Get the reward for the current step
+        """Compute the reward for the current step.
 
-        Reward structure depends on training mode:
-        - Recovery (single-agent): recovery reward given by _get_recovery_reward()
-        - Race (1+ agents):
-            - Predictive TTC: progress - penalties (additive)
-            - Frenet-based: -1 OR progress (exclusive)
+        Reward structure depends on ``training_mode``:
+
+        - **Recovery**: delegates to :meth:`_get_recovery_reward`.
+        - **Race (TTC mode)**: additive — ``sum(progress) - sum(collision_penalties)``.
+        - **Race (Frenet mode)**: exclusive — ``out_of_bounds_penalty`` if boundary
+          exceeded, else ``progress * progress_gain``.
+
+        Returns:
+            Scalar reward for the current step.
         """
 
         if self.training_mode == "recover":
@@ -1148,7 +980,7 @@ class GKEnv(gym.Env):
 
             for i in range(self.num_agents):
                 # current_s calculated as distance along track centerline from start, in meters
-                current_s, _ = self.track.centerline.spline.calc_arclength_inaccurate(self.poses_x[i], self.poses_y[i])
+                current_s = self._frenet_cache[i, 0]
 
                 # progress is current - previous arc length
                 prog = current_s - self.last_s[i]
@@ -1185,28 +1017,38 @@ class GKEnv(gym.Env):
             return reward
 
     def step(self, action, skip_integration=False):
-        """
-        Step function for the gym env
+        """Step the environment by one timestep.
 
         Args:
-            action (np.ndarray(num_agents, 2))
-            skip_integration (bool): if True, skip dynamics integration (used in reset to generate obs)
+            action: Control inputs for all agents, shape ``(num_agents, 2)``.
+                Each row is ``[steer, longitudinal]``.
+            skip_integration: If True, skip dynamics integration (used during
+                reset to generate an initial observation).
 
         Returns:
-            obs (dict): observation of the current step
-            reward (float, default=self.timestep): step reward, currently is physics timestep
-            done (bool): if the simulation is done
-            info (dict): auxillary information dictionary
+            Tuple ``(obs, reward, terminated, truncated, info)``.
         """
 
         # call simulation step
         self.sim.step(action, skip_integration=skip_integration)
 
+        self._update_frenet_cache()
+
+        # detect numerical instability flagged by RaceCar.update_pose
+        # (no-op when prevent_instability=False — agents never set .unstable)
+        if self.prevent_instability:
+            unstable_agents = [i for i, a in enumerate(self.sim.agents) if a.unstable]
+            instability_truncation = len(unstable_agents) > 0
+        else:
+            unstable_agents = []
+            instability_truncation = False
+
         # observation
         obs = self.observation_type.observe()
 
-        # Track observation min/max if enabled
-        if self.record_obs_min_max:
+        # Track observation min/max if enabled — skip on unstable steps so a
+        # single blow-up doesn't poison the cumulative tracker
+        if self.record_obs_min_max and not instability_truncation:
             self._update_obs_min_max()
 
         # increment time and step
@@ -1228,13 +1070,44 @@ class GKEnv(gym.Env):
             "collisions": self.sim.collisions,
             "sim_time": self.current_time,
         }
+        if self.render_spec is not None and self.render_spec.show_ctr_debug:
+            states = [a.standard_state for a in self.sim.agents]
+            steer_type, throttle_type = self.action_type.type
+            self.render_obs.update(
+                {
+                    "steering_cmds": np.array([a.curr_steering_cmd for a in self.sim.agents]),
+                    "throttle_cmds": np.array([a.curr_throttle_cmd for a in self.sim.agents]),
+                    "v_x": np.array([s["v_x"] for s in states]),
+                    "delta": np.array([s["delta"] for s in states]),
+                    "steer_bounds": self.action_type.steer_bounds,
+                    "throttle_bounds": self.action_type.throttle_bounds,
+                    "steer_type": steer_type,
+                    "throttle_type": throttle_type,
+                    "delta_bounds": (self.params["s_min"], self.params["s_max"]),
+                    "vx_bounds": (self.params["v_min"], self.params["v_max"]),
+                }
+            )
+        if self.render_spec is not None and self.render_spec.show_obs_debug:
+            self.render_obs.update(
+                {
+                    "obs_debug_getter": self.observation_type.get_debug_features,
+                    "obs_debug_normalize": getattr(self, "normalize_obs", False),
+                }
+            )
 
         # check done
         terminated, truncated, toggle_list = self._check_done()
+        truncated = truncated or instability_truncation
         info = {
             "checkpoint_done": toggle_list,
             "episode_length": self.current_step,
+            "instability_truncation": instability_truncation,
         }
+        if instability_truncation:
+            agent_infos = [self.sim.agents[i]._unstable_info for i in unstable_agents]
+            info["unstable_agents"] = unstable_agents
+            info["unstable_info"] = agent_infos
+            self._instability_count += 1
 
         # calc reward
         reward = self._get_reward()
@@ -1249,26 +1122,44 @@ class GKEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
-        """
-        Reset the gym environment by given poses or full states.
+        """Reset the environment and return an initial observation.
 
         Args:
-            seed: random seed for the reset
-            options: dictionary of options for the reset:
-                - "poses": np.ndarray (num_agents, 3) - [x, y, yaw] per agent
-                - "states": np.ndarray (num_agents, 7) - full state per agent (STD model only)
-                            [x, y, delta, v, yaw, yaw_rate, slip_angle]
-                Note: Cannot specify both "poses" and "states".
+            seed: Random seed for reproducibility.
+            options: Optional dict with one of:
+
+                - ``"poses"``: ``np.ndarray`` of shape ``(num_agents, 3)``
+                  — ``[x, y, yaw]`` per agent.
+                - ``"states"``: ``np.ndarray`` of shape ``(num_agents, n)`` where
+                  ``n`` is the model-specific row width; see
+                  :meth:`gymkhana.envs.dynamic_models.DynamicModel.user_state_lens`
+                  for accepted widths and layouts. MB does not support
+                  full-state reset.
+
+                Cannot specify both keys simultaneously.
 
         Returns:
-            obs (dict): observation of the current step
-            reward (float, default=self.timestep): step reward, currently is physics timestep
-            done (bool): if the simulation is done
-            info (dict): auxillary information dictionary
+            Tuple ``(obs, info)``.
         """
         if seed is not None:
             np.random.seed(seed=seed)
         super().reset(seed=seed)
+
+        # Domain randomization: perturb selected params by multiplicative Gaussian Noise X~N(1, σ), clipped at ±dr_clip_k·σ.
+        if self.dr_sigmas:
+            perturbed = copy.deepcopy(self._base_params)
+            for name, sigma in self.dr_sigmas.items():
+                delta = self.dr_clip_k * sigma
+                mult = np.clip(np.random.normal(1.0, sigma), 1.0 - delta, 1.0 + delta)
+                perturbed[name] = self._base_params[name] * mult
+            # Re-establish coupled invariants after perturbing the canonical partner.
+            if "lf" in self.dr_sigmas:
+                perturbed["lr"] = self._base_params["lf"] + self._base_params["lr"] - perturbed["lf"]
+            if "s_max" in self.dr_sigmas:
+                perturbed["s_min"] = -perturbed["s_max"]
+            if "sv_max" in self.dr_sigmas:
+                perturbed["sv_min"] = -perturbed["sv_max"]
+            self.update_params(perturbed)
 
         # Re-randomize direction for random
         if self.track_direction_config == "random":
@@ -1300,21 +1191,28 @@ class GKEnv(gym.Env):
                 raise ValueError("Cannot provide both 'poses' and 'states' in reset options.")
 
             if has_states:
-                # Validate STD model requirement
-                if self.model != DynamicModel.STD:
-                    raise ValueError(
-                        f"Full state initialization only supported for STD model. "
-                        f"Current model: {self.model}. Optionally use 'poses' instead."
-                    )
+                # Per-model accepted widths (and MB rejection) come from
+                # DynamicModel.user_state_lens; this layer only validates that
+                # the supplied 2-D array matches (num_agents, accepted_len).
+                accepted_lens = self.model.user_state_lens()
 
                 states = options["states"]
-                assert isinstance(states, np.ndarray) and states.shape == (
-                    self.num_agents,
-                    7,
-                ), f"States must be a numpy array of shape (num_agents, 7), got {states.shape}"
+                valid = (
+                    isinstance(states, np.ndarray)
+                    and states.ndim == 2
+                    and states.shape[0] == self.num_agents
+                    and states.shape[1] in accepted_lens
+                )
+                if not valid:
+                    accepted_str = " or ".join(f"(num_agents={self.num_agents}, {n})" for n in accepted_lens)
+                    raise ValueError(
+                        f"States must be a numpy array of shape {accepted_str} "
+                        f"for model {self.model.name}, got "
+                        f"{states.shape if isinstance(states, np.ndarray) else type(states).__name__}"
+                    )
 
-                # Save poses for downstream use
-                # State indices: [x, y, delta, v, yaw, yaw_rate, slip_angle]
+                # Save poses for downstream use (x, y, yaw indices unchanged
+                # across all accepted widths)
                 poses = np.column_stack([states[:, 0], states[:, 1], states[:, 4]])
 
             elif has_poses:
@@ -1381,12 +1279,15 @@ class GKEnv(gym.Env):
         return obs, info
 
     def _correct_wraparound_prog(self, prog: float, track_length: float, margin=10.0) -> float:
-        """
-        Validate that progress is within physically possible bounds.
+        """Correct arc-length progress for track wraparound and clip to physical limits.
 
         Args:
-            prog (float): Progress in meters for current timestep
-            agent_idx (int): Index of the agent
+            prog: Raw progress in metres for the current timestep.
+            track_length: Total track length for wraparound correction.
+            margin: Multiplier on ``v_max * timestep`` used as the clip limit (default 10).
+
+        Returns:
+            Corrected and clipped progress in metres.
         """
         # max progress used for clipping
         max_progress = self.params["v_max"] * self.timestep * margin
@@ -1405,52 +1306,40 @@ class GKEnv(gym.Env):
         return np.clip(prog, -max_progress, max_progress)
 
     def update_map(self, map_name: str):
-        """
-        Updates the map used by simulation
+        """Update the map used by the simulation.
 
         Args:
-            map_name (str): name of the map
-
-        Returns:
-            None
+            map_name: Name of the map.
         """
         self.sim.set_map(map_name)
         self.track = Track.from_track_name(map_name)
 
     def update_params(self, params, index=-1):
-        """
-        Updates the parameters used by simulation for vehicles
+        """Update vehicle parameters for the simulation.
 
         Args:
-            params (dict): dictionary of parameters
-            index (int, default=-1): if >= 0 then only update a specific agent's params
-
-        Returns:
-            None
+            params: Dictionary of vehicle parameters.
+            index: If >= 0, update only the specified agent's params; -1 updates all.
         """
         self.sim.update_params(params, agent_idx=index)
 
     def add_render_callback(self, callback_func):
-        """
-        Add extra drawing function to call during rendering.
+        """Add an extra drawing function to call during rendering.
 
         Args:
-            callback_func (function (EnvRenderer) -> None): custom function to called during render()
+            callback_func: Callable with signature ``(EnvRenderer) -> None`` invoked each :meth:`render` call.
         """
         if self.renderer is not None:
             self.renderer.add_renderer_callback(callback_func)
 
     def render(self, mode="human"):
-        """
-        Renders the environment with pyglet. Use mouse scroll in the window to zoom in/out, use mouse click drag to pan. Shows the agents, the map, current fps (bottom left corner), and the race information near as text.
+        """Render the environment.
+
+        Mouse scroll zooms in/out; click-drag pans. Displays agents, map,
+        current FPS, and race information.
 
         Args:
-            mode (str, default='human'): rendering mode, currently supports:
-                'human': slowed down rendering such that the env is rendered in a way that sim time elapsed is close to real time elapsed
-                'human_fast': render as fast as possible
-
-        Returns:
-            None
+            mode: Rendering mode — ``"human"`` (real-time paced) or ``"human_fast"`` (uncapped).
         """
         # NOTE: separate render (manage render-mode) from render_frame (actual rendering with pyglet)
 
@@ -1460,10 +1349,14 @@ class GKEnv(gym.Env):
         self.renderer.update(state=self.render_obs)
         return self.renderer.render()
 
+    def disable_obs_min_max_recording(self):
+        """Mute the close()-time print. Called by the SubprocVecEnv aggregator
+        via ``env_method`` so the flag is set on the inner GKEnv, not the
+        Monitor wrapper (which is what ``set_attr`` would target)."""
+        self.record_obs_min_max = False
+
     def close(self):
-        """
-        Ensure renderer is closed upon deletion
-        """
+        """Close the environment and release renderer resources."""
         # Print observation statistics if tracking was enabled
         if self.record_obs_min_max:
             self._print_obs_min_max_stats()

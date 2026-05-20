@@ -1,3 +1,5 @@
+"""Raceline and centerline representation with cubic spline interpolation."""
+
 from __future__ import annotations
 
 import pathlib
@@ -10,35 +12,21 @@ from .cubic_spline import CubicSpline2D
 
 
 class Raceline:
-    """
-    Raceline object.
+    """A racing or centerline path defined by waypoints and a cubic spline.
 
-    Attributes
-    ----------
-    n : int
-        number of waypoints
-    ss : np.ndarray
-        arclength along the raceline
-    xs : np.ndarray
-        x-coordinates of the waypoints
-    ys : np.ndarray
-        y-coordinates of the waypoints
-    yaws : np.ndarray
-        yaw angles of the waypoints
-    ks : np.ndarray
-        curvature of the waypoints
-    vxs : np.ndarray
-        velocity along the raceline
-    axs : np.ndarray
-        acceleration along the raceline
-    w_lefts : np.ndarray
-        left track width at each waypoint
-    w_rights : np.ndarray
-        right track width at each waypoint
-    length : float
-        length of the raceline
-    spline : CubicSpline2D
-        spline object through the waypoints
+    Attributes:
+        n: Number of waypoints.
+        ss: Arc length along the line.
+        xs: X-coordinates of the waypoints.
+        ys: Y-coordinates of the waypoints.
+        yaws: Yaw angles at the waypoints.
+        ks: Curvature at the waypoints.
+        vxs: Velocity along the line.
+        axs: Acceleration along the line.
+        w_lefts: Left track width at each waypoint.
+        w_rights: Right track width at each waypoint.
+        length: Total length of the raceline (meters).
+        spline: Cubic spline fitted through the waypoints.
     """
 
     def __init__(
@@ -54,6 +42,20 @@ class Raceline:
         w_lefts: Optional[np.ndarray] = None,
         w_rights: Optional[np.ndarray] = None,
     ):
+        """Initialize a Raceline.
+
+        Args:
+            xs: X-coordinates of the waypoints.
+            ys: Y-coordinates of the waypoints.
+            velxs: Velocity at each waypoint.
+            ss: Arc length values; computed from ``xs``/``ys`` if not provided.
+            psis: Yaw angles at the waypoints.
+            kappas: Curvature at the waypoints.
+            accxs: Acceleration at the waypoints.
+            spline: Pre-built cubic spline; fitted from ``xs``/``ys`` if not provided.
+            w_lefts: Left track width at each waypoint (centerline only).
+            w_rights: Right track width at each waypoint (centerline only).
+        """
         assert xs.shape == ys.shape == velxs.shape, "inconsistent shapes for x, y, vel"
 
         self.n = xs.shape[0]
@@ -83,24 +85,19 @@ class Raceline:
         fixed_speed: Optional[float] = 1.0,
         track_scale: Optional[float] = 1.0,
     ):
-        """
-        Load raceline from a centerline file.
+        """Load a centerline from a CSV file.
 
-        Parameters
-        ----------
-        filepath : pathlib.Path
-            path to the centerline file
-        delimiter : str, optional
-            delimiter used in the file, by default ","
-        fixed_speed : float, optional
-            fixed speed along the raceline, by default 1.0
-        track_scale : float, optional
-            scaling factor for the track, by default 1.0
+        Expected format: ``[x, y, w_right, w_left]`` per row.
+        Validates that the centerline is symmetric within 10% tolerance.
 
-        Returns
-        -------
-        Raceline
-            raceline object
+        Args:
+            filepath: Path to the centerline CSV file.
+            delimiter: Field delimiter (default ``","``).
+            fixed_speed: Constant speed assigned to all waypoints (default 1.0).
+            track_scale: Scale factor applied to coordinates (default 1.0).
+
+        Returns:
+            :class:`Raceline` instance representing the centerline.
         """
         assert filepath.exists(), f"input filepath does not exist ({filepath})"
         waypoints = np.loadtxt(filepath, delimiter=delimiter)
@@ -175,22 +172,17 @@ class Raceline:
     def from_raceline_file(
         filepath: pathlib.Path, delimiter: str = ";", track_scale: Optional[float] = 1.0
     ) -> Raceline:
-        """
-        Load raceline from a raceline file.
+        """Load an optimised raceline from a CSV file.
 
-        Parameters
-        ----------
-        filepath : pathlib.Path
-            path to the raceline file
-        delimiter : str, optional
-            delimiter used in the file, by default ";"
-        track_scale : float, optional
-            scaling factor for the track, by default 1.0
+        Expected format: ``[s, x, y, psi, k, vx, ax]`` per row.
 
-        Returns
-        -------
-        Raceline
-            raceline object
+        Args:
+            filepath: Path to the raceline CSV file.
+            delimiter: Field delimiter (default ``";"``).
+            track_scale: Scale factor applied to coordinates (default 1.0).
+
+        Returns:
+            :class:`Raceline` instance representing the optimised racing line.
         """
         assert filepath.exists(), f"input filepath does not exist ({filepath})"
         waypoints = np.loadtxt(filepath, delimiter=delimiter).astype(np.float32)
@@ -224,15 +216,14 @@ class Raceline:
         )
 
     def reversed(self) -> "Raceline":
-        """
-        Create reversed copy for reverse-direction driving.
+        """Create a reversed copy of this raceline for reverse-direction driving.
 
-        Works for both centerline (has w_lefts/w_rights) and raceline (w_lefts/w_rights are None).
+        Works for both centerline (with ``w_lefts``/``w_rights``) and raceline
+        (where those fields are ``None``). Track widths are swapped so left/right
+        remain correct relative to the new driving direction.
 
-        Returns
-        -------
-        Raceline
-            A new Raceline object with reversed direction.
+        Returns:
+            New :class:`Raceline` with reversed direction.
         """
         # Reverse coordinate arrays
         xs_rev = self.xs[::-1].copy()
@@ -281,15 +272,11 @@ class Raceline:
         )
 
     def render_waypoints(self, e: EnvRenderer, color: tuple[int, int, int] = (0, 128, 0)) -> None:
-        """
-        Callback to render waypoints.
+        """Render the raceline waypoints as a closed line.
 
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object.
-        color : tuple[int, int, int], optional
-            RGB color tuple for the waypoint line, by default (0, 128, 0) (green).
+        Args:
+            e: Environment renderer object.
+            color: RGB color tuple for the line (default green ``(0, 128, 0)``).
         """
         points = np.stack([self.xs, self.ys], axis=1)
         if self.waypoint_render is None:

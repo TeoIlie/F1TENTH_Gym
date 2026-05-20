@@ -37,7 +37,7 @@ When ``sparse_width_obs`` is ``True``, only the first and last lookahead width v
 Normalization
 -------------
 
-When ``normalize_obs`` is ``True``, observation values are scaled to a bounded range. Normalization bounds are defined in the codebase and can be tuned by enabling ``record_obs_min_max`` in the config to record actual min/max values during training runs.
+When ``normalize_obs`` is ``True``, observation values are scaled to a bounded range. Normalization bounds are defined in the codebase and can be tuned by enabling ``record_obs_min_max`` in the config to record actual min/max values during training runs. With ``record_obs_min_max`` enabled, training runs also write periodic snapshots to ``outputs/config/<run_id>/obs_min_max.yaml`` and stream per-feature bounds-violation magnitudes to wandb (see :doc:`../training`).
 
 API reference
 -------------

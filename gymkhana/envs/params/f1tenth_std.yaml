@@ -1,0 +1,78 @@
+# Parameters for the 1/10th scale F1TENTH car (STD model)
+
+# =========================
+# VEHICLE PARAMS
+# =========================
+m: 3.58           # [kg] total mass - measured accurately using a scale
+lf: 0.176         # [m] distance from center of gravity to front axle - measured accurately by balancing the car about the CoG
+lr: 0.15          # [m] distance from center of gravity to rear axle - measured accurately by balancing the car about the CoG
+I_z: 0.0897       # [kg * m^2] moment of inertia for entire mass about z axis - currently copied from f1tenth_gym
+s_min: -0.52      # [rad] minimum steering angle - originally -0.4189
+s_max: 0.52       # [rad] maximum steering angle - originally 0.4189
+sv_min: -6.5531   # [rad/s] minimum steering speed
+sv_max: 6.5531    # [rad/s] maximum steering speed
+T_steer: 0.081531 # [s] Steering actuator time constant; 0/omitted gives bang-bang, else first-order lag - 
+v_switch: 7.319   # [m/s] velocity threshold above which peak accl scales down inversely with speed
+                  # models the fact that at high speed, the powertrain can no longer produce wheelspin/peak torque
+a_max: 7.3614     # [m/s^2] maximum acceleration (-a_max is maximum braking) - originally 9.51
+v_min: -5.0       # [m/s] minimum velocity
+v_max: 20.0       # [m/s] maximum velocity
+width: 0.31       # [m] vehicle width
+length: 0.58      # [m] vehicle length
+h_s: 0.0898       # [m] height of center of gravity - copied from ETH simulator
+R_w: 0.0434       # [m] effective tire radius - estimated by me to be 49 mm which is 0.049 m
+I_y_w: 0.0012016  # [kg m^2] wheel inertia -
+T_sb: 0.5         # [no units] torque split of brakes (percent of torque sent to front axle) - AWD, assuming even front/back
+T_se: 0.5         # [no units] torque split of engine (percent of torque sent to front axle) - AWD, assuming even front/back
+
+# =========================
+# PAC2002 TIRE PARAMETERS
+# =========================
+# Defaults from ADAMS handbook. All coefficients are dimensionless fit constants.
+# Magic Formula:  F = D·sin(C·arctan(B·x − E·(B·x − arctan(B·x)))) + Sv,  x = slip + Sh
+# Naming:  tire_<p|r>_<knob><axis><idx>
+#   p=pure slip, r=combined slip | c=C d=D b=B k=K(→B) e=E h=Sh v=Sv | x=long, y=lat
+#   idx: 1=nominal, 2=load/cross-slip, 3=camber, 4-6=higher-order
+# Sysid priority: peaks & stiffness (d*, k*) > combined slopes (r_b*) > shifts/curvature
+
+# Pure-slip longitudinal (formula_longitudinal)
+tire_p_dx1: 0.7304       # D: peak longitudinal friction μ_x - dominant long. param
+tire_p_kx1: 16.7905      # K→B: longitudinal slip stiffness - secondary long. para,
+tire_p_cx1: 1.1952       # C: shape of Fx curve - tertiary long. param
+tire_p_ex1: -0.0959      # E: curvature of Fx peak - tertiary long. param
+tire_p_hx1: 0.0012297    # Sh: horizontal shift
+tire_p_vx1: -8.8098e-06  # Sv: vertical shift
+
+# Pure-slip lateral (formula_lateral)
+tire_p_dy1: 0.2903       # D: peak lateral friction μ_y - dominant lat. param
+tire_p_ky1: -21.1134     # K→B: cornering stiffness - secondary lat. param
+tire_p_cy1: 1.1170       # C: shape of Fy curve - tertiary lat. param
+tire_p_ey1: 0.7310       # E: curvature of Fy peak - tertiary lat. param
+tire_p_hy1: 0.0026747    # Sh: horizontal shift
+tire_p_vy1: 0.037318     # Sv: vertical shift
+
+# Combined-slip longitudinal reduction (formula_longitudinal_comb)
+tire_r_bx1: 9.4634       # B: base slope of Fx reduction vs α
+tire_r_bx2: -19.2474     # B: slope variation with κ
+tire_r_cx1: 1.3723       # C: shape of Fx reduction
+tire_r_ex1: 0.4564       # E: curvature of Fx reduction
+tire_r_hx1: 0.0050722    # Sh: shift of Fx reduction
+
+# Combined-slip lateral reduction + κ-induced side force Svyk (formula_lateral_comb)
+tire_r_by1: 14.2841      # B: base slope of Fy reduction vs κ
+tire_r_by2: 7.2795       # B: slope variation with α
+tire_r_by3: 0.0513       # B: α-shift in slope
+tire_r_cy1: 1.1433       # C: shape of Fy reduction
+tire_r_ey1: 0.8369       # E: curvature of Fy reduction
+tire_r_hy1: 5.7448e-06   # Sh: shift of Fy reduction
+tire_r_vy1: 0.0429       # Svyk: base magnitude of κ-induced side force
+tire_r_vy4: 13.9457      # Svyk: variation with α
+tire_r_vy5: 1.5620       # Svyk: variation with κ
+tire_r_vy6: -11.3374     # Svyk: variation with atan(κ)
+
+# Dead: camber terms (single-track has no roll DOF, gamma=0 at all call sites)
+tire_p_dx3: 0            # μ_x variation with camber²
+tire_p_dy3: -2.8821      # μ_y variation with camber²
+tire_p_hy3: 0.031415     # Sh variation with camber
+tire_p_vy3: -0.32931     # Sv variation with camber
+tire_r_vy3: -0.27568     # Svyk variation with camber

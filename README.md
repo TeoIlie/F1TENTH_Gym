@@ -1,8 +1,7 @@
 [![gymkhana](https://img.shields.io/pypi/v/gymkhana)](https://pypi.org/project/gymkhana/)
-[![python_version](https://img.shields.io/badge/Python-%3E=3.10-purple)](https://www.python.org/downloads/)
+[![python_version](https://img.shields.io/pypi/pyversions/gymkhana?color=purple)](https://pypi.org/project/gymkhana/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![Python 3.10-3.12](https://github.com/TeoIlie/Gym-Khana/actions/workflows/ci.yml/badge.svg)](https://github.com/TeoIlie/Gym-Khana/actions/workflows/ci.yml)
-[![Docker](https://github.com/TeoIlie/Gym-Khana/actions/workflows/docker.yml/badge.svg)](https://github.com/TeoIlie/Gym-Khana/actions/workflows/docker.yml)
 [![Code Style](https://github.com/TeoIlie/Gym-Khana/actions/workflows/lint.yml/badge.svg)](https://github.com/TeoIlie/Gym-Khana/actions/workflows/lint.yml)
 [![Documentation](https://readthedocs.org/projects/gym-khana/badge/?version=latest)](https://gym-khana.readthedocs.io/en/latest/)
 
@@ -14,7 +13,36 @@
 
 This repository contains a custom gym environment for training Deep Reinforcement Learning policies to race and drift on 1/10 scale or full-size Ackermann vehicles. **SB3** and **wandb** integration included. Based on the f1tenth_gym simulator built by UPenn. For detailed information see the [documentation](https://gym-khana.readthedocs.io/en/latest/)
 
-## Quickstart
+## Table of Contents
+
+- [Installation](#installation)
+  - [Quickstart](#quickstart)
+  - [Additional Dependencies](#additional-dependencies)
+- [Training](#training)
+  - [Wandb](#wandb)
+  - [ONNX Policy Conversion](#onnx-policy-conversion)
+- [Sim2Real Transfer](#sim2real-transfer)
+  - [Domain Randomization](#domain-randomization)
+- [Configuration](#configuration)
+  - [Default Gym/RL configurations](#default-gymrl-configurations)
+  - [Callback and Curriculum Learning (CL) configuration](#callback-and-curriculum-learning-cl-configuration)
+  - [Debugging configuration](#debugging-configuration)
+    - [Control debug panel](#control-debug-panel)
+    - [Observation debug overlay](#observation-debug-overlay)
+  - [`gym.make()` Options](#gymmake-options)
+  - [`env.reset()` Options](#envreset-options)
+- [Customization](#customization)
+  - [Custom Maps](#custom-maps)
+  - [Tire Parameters](#tire-parameters)
+- [Development](#development)
+  - [Formatting/Linting](#formattinglinting)
+  - [Documentation](#documentation)
+  - [Versioning](#versioning)
+- [Known Issues](#known-issues)
+
+## Installation
+
+### Quickstart
 
 Gym-Khana is available as a PyPI package with only the gym environment, or as a full repository with additional functionality.
 
@@ -50,16 +78,7 @@ cd examples
 python3 controller_example.py
 ```
 
-A Dockerfile is also provided with support for the GUI with nvidia-docker (nvidia GPU required):
-
-```bash
-docker build -t gymkhana -f Dockerfile .
-docker run --gpus all -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix gymkhana
-````
-
-Then the same examples can be run.
-
-## Additional Dependencies
+### Additional Dependencies
 
 MPC controllers require dependencies that cannot be installed via pip alone. For the reference MPC implementation see the ForzaETH [race_stack](https://github.com/ForzaETH/race_stack)
 
@@ -86,6 +105,7 @@ pip install -e ~/software/acados/interfaces/acados_template
 ```
 
 ## Training
+
 The main racing training script is at `train/ppo_race.py`. The recovery training script is at `train/ppo_recover.py`. Both include functionality for:
 1. **Train** (`--m t`): Train a new model with parallel environments using `SubprocVecEnv` and `train/config` params
 2. **Evaluate** (`--m e`): Evaluate a trained model with visualization
@@ -101,11 +121,64 @@ python3 train/ppo_race.py --m t
 
 Detailed usage guidelines are at the top of the training script files.
 
+Fresh training runs apply a `log_std` schedule that linearly anneals the policy's action noise from `init` to `end` across total timesteps (configured in `train/config/rl_config.yaml` under `log_std_schedule`). This closes the stochastic-vs-deterministic train/eval gap that otherwise arises with SB3's default `log_std_init=0`. Comment out the block to disable.
+
+### Wandb
+
+By default, all training models are synced to **wandb**, with training data for runs saved to `/wandb` folder.
+
+To login to your account, use `wandb login`. To create an account, visit <https://wandb.ai>
+
+### ONNX Policy Conversion
+
+To use policies in other packages, such as a ROS2 package for sim-to-real transfer, we provide support for converting an SB3 model to ONNX type. Use `train/export_onnx.py` for conversion:
+
+```bash
+python3 train/export_onnx.py --path <SB3 model path>
+```
+
+Run the policy with ONNX using `OnnxPolicyRunner` defined in `gymkhana/inference/onnx_runner.py`. For example for a racing policy:
+
+```bash
+python3 train/ppo_race.py --m x --path <ONNX model path>
+```
+
+## Sim2Real Transfer
+
+Tools for narrowing the gap between simulated training and real-vehicle deployment.
+
+### Domain Randomization
+
+At each reset, selected vehicle parameters are perturbed by multiplicative Gaussian noise `θ' = θ · X`, `X ~ N(1, σ)`, clipped at `±dr_clip_k·σ` (default `3.0`). Configured via the `domain_randomization` gym key as a flat `{param: sigma}` dict (σ in `(0, 0.2)`); absent or `None` disables DR. Train configs (`get_drift_train_config`, `get_recovery_train_config`) inject DR from `train/config/gym_config.yaml`; eval always uses nominal parameters.
+
+```yaml
+# train/config/gym_config.yaml
+domain_randomization:
+  m: 0.05         # mass
+  I_z: 0.02       # yaw inertia
+  lf: 0.05        # CoG fore-distance; lr auto-tracks (wheelbase preserved)
+  s_max: 0.03     # max steering angle; s_min auto-mirrors
+  sv_max: 0.02    # max steering velocity; sv_min auto-mirrors
+```
+
+For coupled pairs, randomize only the canonical member (`lf`, `s_max`, `sv_max`). The derived partner (`lr`, `s_min`, `sv_min`) is recomputed each reset; listing it raises `ValueError` pointing to the canonical key.
+
 ## Configuration
 
 ### Default Gym/RL configurations
 
-Default configurations are stored in `/train/config/env_config.py`, with parameters coming from `train/config/rl_config.yaml` and `train/config/gym_config.yaml`. This exposes all necessary Gym env and RL params for training, as well as default functions for getting Gym configs of RL training and testing environments:
+For PyPI users (or anyone who wants a one-liner), the package exposes a `drift_config` preset bundling sensible STD-model drift defaults:
+
+```python
+import gymnasium as gym
+from gymkhana import drift_config
+
+env = gym.make("gymkhana:gymkhana-v0", config=drift_config(map="Drift"))
+```
+
+Keyword args override individual fields (`drift_config(num_agents=2, normalize_obs=False)`).
+
+For training workflows, full configurations are stored in `/train/config/env_config.py`, with parameters coming from `train/config/rl_config.yaml` and `train/config/gym_config.yaml`. This exposes all Gym env and RL params for training, plus convenience functions for getting Gym configs of RL training and testing environments (built on top of `drift_config` with training-specific keys layered on):
 
 1. `/train/config/env_config.py::get_drift_test_config()`
 2. `/train/config/env_config.py::get_drift_train_config()`
@@ -114,7 +187,7 @@ Default configurations are stored in `/train/config/env_config.py`, with paramet
 
 ### Callback and Curriculum Learning (CL) configuration
 
-Default `SB3` callbacks used during training are `WandbCallback`, `CheckpointCallback`, and `EvalCallback`. A custom `CurriculumLearningCallback` is also available, which gradually expands the recovery state initialization ranges as the agent's success rate improves.
+Default `SB3` callbacks used during training are `WandbCallback`, `CheckpointCallback`, and `EvalCallback`. A custom `CurriculumLearningCallback` is also available, which gradually expands the recovery state initialization ranges as the agent's success rate improves. A custom `ObsMinMaxSnapshotCallback` is also attached automatically when `record_obs_min_max` is enabled — it writes periodic snapshots of merged per-subproc obs min/max trackers to `outputs/config/<run_id>/obs_min_max.yaml` and logs per-feature bounds-violation magnitudes to wandb.
 
 CL is configured in `/train/config/gym_config.yaml` under the `curriculum` heading by setting `enabled: true`. Parameters such as `n_stages`, `success_threshold`, and per-state ranges (`v_range`, `beta_range`, etc.) can be tuned there.
 
@@ -131,18 +204,43 @@ Note that CL is only supported for recovery training, with the environment `trai
     2. Optionally, also set `"arc_length_annotation_interval"` to modify the point spacing (`2.0` metres by default)
 4. Set `"render_lookahead_curvatures": True` (it is `False` by default) to visualize lookahead curvature sampling points ahead of the vehicle in **yellow**. Optional parameters:
 5. Set `"debug_frenet_projection" = True` to visualize the Frenet coordinates are correct
-6. Set `"record_obs_min_max"` to `True/False` to record min/max observation values during training, and tweak normalization bounds if necessary, defined in `utils.py::calculate_norm_bounds`
+6. Set `"record_obs_min_max"` to `True/False` to record min/max observation values during training, and tweak normalization bounds if necessary, defined in `utils.py::calculate_norm_bounds`. Min/max are aggregated across parallelized environments and supported regardless of whether `normalize_obs` is enabled. When enabled during training, a YAML snapshot is written periodically to `outputs/config/<run_id>/obs_min_max.yaml`, and per-feature bounds-violation magnitudes (`obs_bounds/<feature>/over` and `.../under`) are streamed to wandb for live monitoring
+7. Set `"render_config"` to a dict of field overrides for the packaged `gymkhana/envs/rendering/rendering.yaml` — e.g. `{"window_size": 1200, "render_type": "pygame", "show_ctr_debug": True}`. Omitted fields keep their yaml defaults. This is the preferred way to tweak rendering when `gymkhana` is installed from PyPI
+8. Set `"prevent_instability"` to `True/False` to enable post-RK4 sanity checks on the standardized state. When enabled, integrator blow-ups are detected, the agent's state is reverted, the episode is truncated, and the running event count is logged to wandb under `instability/total` and printed at end-of-run. The bounds are configurable via `"instability_yaw_rate_bound"` (default `4π` rad/s) and `"instability_slip_bound"` (default `π/2` rad). When disabled, the env behaves as before — no detection, no revert, no truncation
 
-### Important configuration options
+#### Control debug panel
 
-`gym.make()` configurations:
+Set `show_ctr_debug: True` via the `render_config` gym option (or in `gymkhana/envs/rendering/rendering.yaml` for repo users) to enable a real-time control debug panel below the map (PyQt6 renderer only). The panel shows:
+
+- **Actual vehicle state**: current steering angle (`delta`) and longitudinal velocity (`v_x`) in white
+- **Control commands**: raw steering and throttle commands with their bounds, colour-coded to match their bars (steering in blue, throttle in green)
+- **Two zero-centered horizontal bar gauges**: each bar spans the command's full range with the fill extending from zero toward the current value, making the sign and magnitude of each command instantly visible
+
+The panel tracks the currently followed agent (switched via mouse click), defaulting to the ego agent in map view. It is disabled by default to avoid overhead during training.
+
+#### Observation debug overlay
+
+Set `show_obs_debug: True` via the `render_config` gym option (or in `gymkhana/envs/rendering/rendering.yaml` for repo users) to overlay all observation values on top of the map in the top-left corner (PyQt6 renderer only). The overlay displays:
+
+- **Feature names and values**: each observation feature as a key-value pair (e.g., `linear_vel_x: 2.3451`)
+- **Array summaries**: large arrays like LiDAR scans show count, min, max, and mean; small arrays (e.g., lookahead curvatures) show all values
+- **Normalization indicator**: shows `[norm: on]` when observation normalization is active; values are always displayed in raw physical units regardless of normalization
+
+Works with all observation types (`OriginalObservation`, `FeaturesObservation`, `VectorObservation`). For multi-agent environments, the overlay shows the followed agent's observations. Disabled by default to avoid overhead during training.
+
+### `gym.make()` Options
 
 1. Set `training_mode` to define the training goal. This modifies the reset, initialization, track, and reward settings:
     1. `"race"` (default) is used by `train/ppo_race.py` for training racing policies 
     2. `"recover"` is used by `train/ppo_recover.py` to train policies for stabilizing an out-of-control vehicle 
-2. Set `model` to `std` for drifting model with PAC2002 tire model
+2. Set `model` to define vehicle dynamics:
+    1. `ks` - Kinematic Single Track (no tire forces)
+    2. `st` - Single Track (lateral dynamics, no explicit tire model)
+    3. `stp` - Single Track Pacejka, dynamic single-track with lateral-only Pacejka Magic Formula tire model (ported from the ForzaETH f110-simulator). Shares ST's 7-d state layout
+    4. `std` - Single Track Drift with PAC2002 tire model (recommended for drift RL training)
+    5. `mb` - Multi-Body (full-scale parameters only)
 3. Use `control_input` `["accl", "steering_angle"]` for best RL drift training
-4. Use parameter dictionary `params` as `GKEnv.f1tenth_std_vehicle_params()` or `GKEnv.f1tenth_std_drift_bias_params()` for drift parameters on 1/10 scale F1TENTH car
+4. Use parameter dictionary `params` as `GKEnv.f1tenth_std_vehicle_params()` or `GKEnv.f1tenth_std_drift_bias_params()` for drift parameters on 1/10 scale F1TENTH car, or `GKEnv.f1tenth_stp_vehicle_params()` for the STP model
 5. Lookahead curvature/width observations can be configured with spacing and number parameters, and when `render_lookahead_curvatures": True` these will be reflected
     1. `lookahead_n_points` - Number of lookahead points (default: 10)
     2. `lookahead_ds` - Spacing between points in meters (default: 0.3m)
@@ -161,7 +259,7 @@ Note that CL is only supported for recovery training, with the environment `trai
     2. `reverse`: drive around in the opposite direction (For ex, CW instead of CCW)
     3. `random`: randomly drive in the 'regular' or 'reverse' direction at each reset with a 50% chance, to learn left and right cornering equally when training a policy with RL
 
-`env.reset()` configurations:
+### `env.reset()` Options
 
 1. **Poses** and **States** can be used to initialize vehicles at specific configurations. Note:
    - Only one of `poses` or `states` can be used per reset call (not both)
@@ -189,50 +287,32 @@ Note that CL is only supported for recovery training, with the environment `trai
    # Front & rear angular wheel velocities are automatically initialized to form the full 9-d state for STD model type
    ```
 
-## Wandb
+   For the STD model an explicit **9-element** row is also accepted, in which case the front and rear wheel angular velocities `omega_f`, `omega_r` (rad/s) are taken as given rather than derived from the no-slip rolling assumption. Useful for sysid / replay where the simulator must start from an exact measured state. The caller owns consistency between `v` and the wheel speeds.
+   ```python
+   # [x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]  (STD only)
+   states = np.array([[x, y, delta, v, yaw, yaw_rate, slip_angle, omega_f, omega_r]])
+   env.reset(options={"states": states})
+   ```
 
-The wandb models are available here: <https://wandb.ai/teo-altum-quinque-queen-s-university/projects>
+## Customization
 
-## ONNX Policy Conversion
-
-To use policies in other packages, such as a ROS2 package for sim-to-real transfer, we provide support for converting an SB3 model to ONNX type. Use `train/export_onnx.py` for conversion:
-
-```bash
-python3 train/export_onnx.py --path <SB3 model path>
-```
-
-Run the policy with ONNX using `OnnxPolicyRunner` defined in `gymkhana/inference/onnx_runner.py`. For example for a racing policy:
-
-```bash
-python3 train/ppo_race.py --m x --path <ONNX model path>
-```
-
-## Custom Maps
+### Custom Maps
 
 Custom maps can be created using the git submodule <https://github.com/TeoIlie/F1TENTH_Racetracks> stored in folder `/maps`. Once updated, pull the update submodule with `git pull --recurse-submodules`
 
-## Formatting/Linting
-
-Run formatting and auto-fixes manually with `ruff check --fix . && ruff format .` Fixes also are applied before commits due to `.pre-commit-config.yaml` file, with `pre-commit` dependency.
-
-## Important files
-
-* `gymkhana/envs/base_classes.py:503` defines the `step` method.
-  * the action space is defined as an `ndarray` with
-    1. the first element being desired **steering angle**
-    2. second element is desired **velocity**.
-* dynamics models are defined in `gymkhana/envs/dynamic_models`
-  * `single_track.py` models the single-track dynamics model, but only basic tire modelling
-  * `single_track_drift.py` models the single-track dynamics model with PAC2002 tire model, ideal for drift training
-  * `multi_body.py` models the car in greatest detail, but parameters are only available for a full-scale vehicle
-
-## Tire parameters
+### Tire Parameters
 
 * Parameters for the 1/10 scale f1tenth car to be used with the `STD` model are defined in `gymkhana/envs/gymkhana_env.py` as `f1tenth_std_vehicle_params`. They are created as a mix of existing f1tenth params and tire parameters adjusted from the fullscale car.
 * In future I may measure these parameters from real data for more accurate fitting
 * To maintain a history of parameter choices, and how they compare with the correct behaviour on the fullscale car, tests script `tests/model_validation/test_f1tenth_std_params.py` creates comparison figures along with parameter YAML file dump ordered by date created inside folder `figures/tire_params`
 
-## Documentation
+## Development
+
+### Formatting/Linting
+
+Run formatting and auto-fixes manually with `ruff check --fix . && ruff format .` Fixes also are applied before commits due to `.pre-commit-config.yaml` file, with `pre-commit` dependency.
+
+### Documentation
 
 * Documentation is supported through ReadTheDocs Sphinx template at https://gym-khana.readthedocs.io
 * Tagged versions are available via the version selector in the docs (bottom-left flyout)
@@ -243,7 +323,7 @@ cd docs
 make clean && make html && firefox _build/html/index.html
 ```
 
-## Versioning
+### Versioning
 
 This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
 
@@ -253,8 +333,9 @@ This project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PA
 
 To release a new version:
 
-1. Update `version` in `pyproject.toml` and `__version__` in `gymkhana/__init__.py`
-2. Create and push a matching annotated git tag:
+1. Move items from `[Unreleased]` to a new version section in [`CHANGELOG.md`](CHANGELOG.md)
+2. Update `version` in `pyproject.toml` and `__version__` in `gymkhana/__init__.py`
+3. Create and push a matching annotated git tag:
 
 ```bash
 git tag -a v1.2.0 -m "description of release"
@@ -264,7 +345,7 @@ git push origin v1.2.0
 Pushing the tag automatically publishes to TestPyPI and PyPI via the `publish.yml` GitHub Actions workflow.
 
 
-## Known issues
+## Known Issues
 
 * Library support issues on Windows. You must use Python 3.8 as of 10-2021
 

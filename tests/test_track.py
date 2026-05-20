@@ -48,8 +48,11 @@ class TestTrack(unittest.TestCase):
                 - [Trackname_centerline.csv]    # centerline (optional)
         """
         mapdir = pathlib.Path(__file__).parent.parent / "maps"
+        non_track_dirs = {"global_racetrajectory_optimization", "raceline_config"}
         for trackdir in mapdir.iterdir():
             if trackdir.is_file() or trackdir.name.startswith("."):
+                continue
+            if trackdir.name in non_track_dirs:
                 continue
 
             # check subdir is capitalized (at least first letter is capitalized)

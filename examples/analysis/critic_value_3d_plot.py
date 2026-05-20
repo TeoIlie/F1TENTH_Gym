@@ -1,7 +1,7 @@
 """
 3D Critic Value Visualization for PPO Policy
 
-Creates a 3D visualization of the PPO critic (value function) over the Drift_large map:
+Creates a 3D visualization of the PPO critic (value function) over the Drift map:
 - X, Y axes: Position coordinates on the track (meters)
 - Z axis: Critic value V(s) - expected return from that position
 - Expected pattern: High values near raceline, decreasing outward, very low values off-track
@@ -54,7 +54,7 @@ def parse_args():
 
 
 def create_grid(spacing):
-    """Create meshgrid covering the Drift_large track area."""
+    """Create meshgrid covering the Drift track area."""
     xs = np.arange(X_MIN, X_MAX, spacing)
     ys = np.arange(Y_MIN, Y_MAX, spacing)
     X_grid, Y_grid = np.meshgrid(xs, ys)
@@ -99,9 +99,9 @@ def construct_observation(x, y, track, norm_bounds, target_velocity, lookahead_n
         "delta": 0.0,
         "beta": 0.0,
         "prev_steering_cmd": 0.0,
-        "prev_accl_cmd": 0.0,
+        "prev_throttle_cmd": 0.0,
         "prev_avg_wheel_omega": target_velocity / WHEEL_RADIUS,
-        "curr_vel_cmd": target_velocity,
+        "integrated_vel_cmd": target_velocity,
         "lookahead_curvatures": lookahead_curvs,
         "lookahead_widths": lookahead_widths,
     }
@@ -117,9 +117,9 @@ def construct_observation(x, y, track, norm_bounds, target_velocity, lookahead_n
         "delta",
         "beta",
         "prev_steering_cmd",
-        "prev_accl_cmd",
+        "prev_throttle_cmd",
         "prev_avg_wheel_omega",
-        "curr_vel_cmd",
+        "integrated_vel_cmd",
         "lookahead_curvatures",
         "lookahead_widths",
     ]

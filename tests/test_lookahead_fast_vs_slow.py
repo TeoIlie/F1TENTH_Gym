@@ -322,7 +322,6 @@ def test_visualization():
     output_dir = os.path.join(os.path.dirname(__file__), "..", "figures", "tests")
     os.makedirs(output_dir, exist_ok=True)
     plt.savefig(os.path.join(output_dir, "curvature_fast_slow_validation.png"), dpi=300, bbox_inches="tight")
-    plt.close(fig)  # Close the figure to free memory
 
     max_diff = np.max(differences)
     mean_diff = np.mean(differences)
@@ -336,6 +335,8 @@ def test_visualization():
     assert max_diff < tolerance, (
         f"Maximum difference {max_diff:.2e} exceeds tolerance {tolerance:.2e}. Mean difference: {mean_diff:.2e}"
     )
+
+    return plt
 
 
 if __name__ == "__main__":
@@ -369,7 +370,8 @@ if __name__ == "__main__":
         print(f"\n✗ Performance comparison test failed:\n{e}")
 
     try:
-        test_visualization()
+        plt = test_visualization()
+        plt.show()
         print("\n✓ Visualization test passed")
     except AssertionError as e:
         print(f"\n✗ Visualization test failed:\n{e}")

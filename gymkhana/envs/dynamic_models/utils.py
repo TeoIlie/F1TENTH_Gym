@@ -1,19 +1,23 @@
+"""Constraint and controller utilities for vehicle dynamics models."""
+
 import numpy as np
 from numba import njit
 
 
 @njit(cache=True)
 def upper_accel_limit(vel, a_max, v_switch):
-    """
-    Upper acceleration limit, adjusts the acceleration based on constraints
+    """Compute the upper acceleration limit based on velocity.
 
-        Args:
-            vel (float): current velocity of the vehicle
-            a_max (float): maximum allowed acceleration, symmetrical
-            v_switch (float): switching velocity (velocity at which the acceleration is no longer able to create wheel spin)
+    Above ``v_switch``, the maximum acceleration scales down inversely with
+    speed to model the limit at which acceleration can no longer create wheel spin.
 
-        Returns:
-            positive_accel_limit (float): adjusted acceleration
+    Args:
+        vel: Current velocity of the vehicle.
+        a_max: Maximum allowed acceleration (symmetric).
+        v_switch: Velocity above which the limit begins to scale down.
+
+    Returns:
+        Adjusted positive acceleration limit.
     """
     if vel > v_switch:
         pos_limit = a_max * (v_switch / vel)
@@ -25,19 +29,18 @@ def upper_accel_limit(vel, a_max, v_switch):
 
 @njit(cache=True)
 def accl_constraints(vel, a_long_d, v_switch, a_max, v_min, v_max):
-    """
-    Acceleration constraints, adjusts the acceleration based on constraints
+    """Apply acceleration constraints based on velocity bounds and limits.
 
-        Args:
-            vel (float): current velocity of the vehicle
-            a_long_d (float): unconstrained desired acceleration in the direction of travel.
-            v_switch (float): switching velocity (velocity at which the acceleration is no longer able to create wheel spin)
-            a_max (float): maximum allowed acceleration, symmetrical
-            v_min (float): minimum allowed velocity
-            v_max (float): maximum allowed velocity
+    Args:
+        vel: Current velocity of the vehicle.
+        a_long_d: Unconstrained desired acceleration in the direction of travel.
+        v_switch: Velocity at which acceleration can no longer create wheel spin.
+        a_max: Maximum allowed acceleration (symmetric).
+        v_min: Minimum allowed velocity.
+        v_max: Maximum allowed velocity.
 
-        Returns:
-            accl (float): adjusted acceleration
+    Returns:
+        Constrained acceleration.
     """
 
     uac = upper_accel_limit(vel, a_max, v_switch)
@@ -56,19 +59,18 @@ def accl_constraints(vel, a_long_d, v_switch, a_max, v_min, v_max):
 
 @njit(cache=True)
 def steering_constraint(steering_angle, steering_velocity, s_min, s_max, sv_min, sv_max):
-    """
-    Steering constraints, adjusts the steering velocity based on constraints
+    """Apply steering constraints based on angle bounds and velocity limits.
 
-        Args:
-            steering_angle (float): current steering_angle of the vehicle
-            steering_velocity (float): unconstraint desired steering_velocity
-            s_min (float): minimum steering angle
-            s_max (float): maximum steering angle
-            sv_min (float): minimum steering velocity
-            sv_max (float): maximum steering velocity
+    Args:
+        steering_angle: Current steering angle of the vehicle.
+        steering_velocity: Unconstrained desired steering velocity.
+        s_min: Minimum steering angle.
+        s_max: Maximum steering angle.
+        sv_min: Minimum steering velocity.
+        sv_max: Maximum steering velocity.
 
-        Returns:
-            steering_velocity (float): adjusted steering velocity
+    Returns:
+        Constrained steering velocity.
     """
 
     # constraint steering velocity
@@ -84,9 +86,18 @@ def steering_constraint(steering_angle, steering_velocity, s_min, s_max, sv_min,
 
 @njit(cache=True)
 def bang_bang_steer(steer, current_steer, max_sv):
-    """
-    Bang-bang controller outputs maximum steering velocity in the direction of the error,
-    creating aggressive steering response with lag
+    """Bang-bang steering controller.
+
+    Outputs maximum steering velocity in the direction of the error,
+    creating an aggressive steering response with deliberate lag.
+
+    Args:
+        steer: Desired steering angle.
+        current_steer: Current steering angle.
+        max_sv: Maximum steering velocity.
+
+    Returns:
+        Steering velocity command (``+max_sv``, ``-max_sv``, or ``0``).
     """
     # steering
     steer_diff = steer - current_steer
@@ -100,16 +111,20 @@ def bang_bang_steer(steer, current_steer, max_sv):
 
 @njit(cache=True)
 def p_accl(speed, current_speed, max_a, max_v, min_v):
-    """
-    Basic proportional controller for speed/steer -> accl./steer vel.
+    """Proportional controller converting a target speed to an acceleration command.
+
+    Gain is scaled by ``max_a / max_v`` (or ``max_a / abs(min_v)`` when braking),
+    with separate forward and reverse gain schedules.
 
     Args:
-        speed (float): desired input speed
-        steer (float): desired input steering angle
+        speed: Desired target speed.
+        current_speed: Current vehicle speed.
+        max_a: Maximum allowed acceleration.
+        max_v: Maximum allowed velocity.
+        min_v: Minimum allowed velocity (negative for reverse).
 
     Returns:
-        accl (float): desired input acceleration
-            sv (float): desired input steering velocity
+        Acceleration command.
     """
     # accl
     vel_diff = speed - current_speed

@@ -14,24 +14,38 @@ from stable_baselines3.common.policies import BasePolicy
 from wandb.integration.sb3 import WandbCallback
 
 import wandb
-from train.callbacks import make_curriculum_callback
+from train.callbacks import (
+    LogStdScheduleCallback,
+    make_curriculum_callback,
+    make_instability_callback,
+    make_obs_min_max_callback,
+)
 from train.config.env_config import (
+    ACTOR_LAYER_SIZE,
     ADDITIONAL_TIMESTEPS,
     BEST_MODEL,
     CKPT_SAVE_FREQ,
+    CRITIC_LAYER_SIZE,
     END_LEARNING_RATE,
     EVAL_SEED,
+    LOG_STD_SCHEDULE,
     N_ENVS,
     N_STEPS,
+    PARAMS,
     SEED,
     START_LEARNING_RATE,
     TOTAL_TIMESTEPS,
     TRANSFER_RESET_CRITIC,
     TRANSFER_RESET_LOG_STD,
+    USE_CUSTOM_RELU,
     get_curriculum_config,
     get_env_id,
 )
 from train.train_utils import (
+    CustomLeakyReLU,
+    aggregate_and_print_instability_count,
+    aggregate_and_print_obs_min_max,
+    build_deploy_config,
     download_model_from_wandb,
     extract_rl_config,
     generate_run_id,
@@ -46,6 +60,7 @@ from train.train_utils import (
     print_header,
     save_config,
     save_full_gym_config,
+    set_global_step_axis,
 )
 
 
@@ -64,6 +79,8 @@ GYM_OVERRIDES_YAML = "gym_overrides_config.yaml"
 CURRICULUM_YAML = "curriculum_config.yaml"
 RL_YAML = "rl_config.yaml"
 TRANSFER_YAML = "transfer_config.yaml"
+DEPLOY_YAML = "deploy.yaml"
+OBS_MIN_MAX_YAML = "obs_min_max.yaml"
 
 
 def train(profile: TrainingProfile):
@@ -81,15 +98,24 @@ def train(profile: TrainingProfile):
         dir=proj_root,
         save_code=True,
     )
+    set_global_step_axis()
 
     tensorboard_dir, models_dir, config_dir = make_output_dirs(run.id, output_root)
     save_config(profile.train_config, config_dir, GYM_OVERRIDES_YAML)
     save_full_gym_config(profile.train_config, config_dir, GYM_YAML)
 
     env = make_subprocvecenv(SEED, profile.train_config, N_ENVS, profile.track_pool)
-    eval_env = make_eval_env(EVAL_SEED, profile.train_config)
+    eval_env = make_eval_env(EVAL_SEED, profile.test_config)
 
     learning_rate = linear_schedule(START_LEARNING_RATE, END_LEARNING_RATE)
+
+    policy_kwargs = dict(
+        net_arch=dict(pi=[ACTOR_LAYER_SIZE, ACTOR_LAYER_SIZE], vf=[CRITIC_LAYER_SIZE, CRITIC_LAYER_SIZE]),
+    )
+    if LOG_STD_SCHEDULE is not None:
+        policy_kwargs["log_std_init"] = LOG_STD_SCHEDULE["init"]
+    if USE_CUSTOM_RELU:
+        policy_kwargs["activation_fn"] = CustomLeakyReLU
 
     model = PPO(
         policy="MlpPolicy",
@@ -100,6 +126,7 @@ def train(profile: TrainingProfile):
         device="cpu",
         seed=SEED,
         learning_rate=learning_rate,
+        policy_kwargs=policy_kwargs,
     )
 
     rl_config = extract_rl_config(model, TOTAL_TIMESTEPS, N_ENVS)
@@ -107,6 +134,10 @@ def train(profile: TrainingProfile):
 
     curriculum_config = get_curriculum_config()
     save_config(curriculum_config, config_dir, CURRICULUM_YAML)
+
+    deploy_config = build_deploy_config(eval_env, PARAMS)
+    if deploy_config is not None:
+        save_config(deploy_config, config_dir, DEPLOY_YAML)
 
     callbacks = [
         WandbCallback(gradient_save_freq=0, verbose=2),
@@ -118,6 +149,18 @@ def train(profile: TrainingProfile):
     )
     if curriculum_cb is not None:
         callbacks.append(curriculum_cb)
+    obs_min_max_cb = make_obs_min_max_callback(profile.train_config, config_dir, OBS_MIN_MAX_YAML)
+    if obs_min_max_cb is not None:
+        callbacks.append(obs_min_max_cb)
+    instability_cb = make_instability_callback(profile.train_config)
+    if instability_cb is not None:
+        callbacks.append(instability_cb)
+    if LOG_STD_SCHEDULE is not None:
+        callbacks.append(
+            LogStdScheduleCallback(
+                start=LOG_STD_SCHEDULE["init"], end=LOG_STD_SCHEDULE["end"], total_timesteps=TOTAL_TIMESTEPS
+            )
+        )
 
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,
@@ -132,6 +175,8 @@ def train(profile: TrainingProfile):
     best_model_path = f"{models_dir}/{BEST_MODEL}/{BEST_MODEL}"
     run.save(f"{best_model_path}.zip", base_path=models_dir)
 
+    aggregate_and_print_obs_min_max(env)
+    aggregate_and_print_instability_count(env)
     env.close()
     eval_env.close()
 
@@ -206,6 +251,7 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
         dir=proj_root,
         save_code=True,
     )
+    set_global_step_axis()
 
     print(f"New run ID: {new_run_id}")
 
@@ -214,7 +260,7 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
 
     # Uses current env_config.py
     env = make_subprocvecenv(SEED, profile.train_config, N_ENVS, profile.track_pool)
-    eval_env = make_eval_env(EVAL_SEED, profile.train_config)
+    eval_env = make_eval_env(EVAL_SEED, profile.test_config)
 
     model = PPO.load(model_path, env=env, device="cpu")
 
@@ -232,6 +278,10 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
     curriculum_config = get_curriculum_config()
     save_config(curriculum_config, config_dir, CURRICULUM_YAML)
 
+    deploy_config = build_deploy_config(eval_env, PARAMS)
+    if deploy_config is not None:
+        save_config(deploy_config, config_dir, DEPLOY_YAML)
+
     callbacks = [
         WandbCallback(gradient_save_freq=0, verbose=2),
         get_ckpt_callback(models_dir=models_dir, save_freq=CKPT_SAVE_FREQ),
@@ -242,6 +292,12 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
     )
     if curriculum_cb is not None:
         callbacks.append(curriculum_cb)
+    obs_min_max_cb = make_obs_min_max_callback(profile.train_config, config_dir, OBS_MIN_MAX_YAML)
+    if obs_min_max_cb is not None:
+        callbacks.append(obs_min_max_cb)
+    instability_cb = make_instability_callback(profile.train_config)
+    if instability_cb is not None:
+        callbacks.append(instability_cb)
 
     print("\nContinuing training...")
 
@@ -263,6 +319,8 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
     print(f"Final model saved: {final_model_path}.zip")
     print(f"New run ID: {new_run_id}")
 
+    aggregate_and_print_obs_min_max(env)
+    aggregate_and_print_instability_count(env)
     env.close()
     eval_env.close()
 
@@ -319,6 +377,7 @@ def transfer_train(
         dir=proj_root,
         save_code=True,
     )
+    set_global_step_axis()
 
     print(f"New run ID: {new_run_id}")
 
@@ -327,7 +386,7 @@ def transfer_train(
 
     # Uses current env_config.py
     env = make_subprocvecenv(SEED, profile.train_config, N_ENVS, profile.track_pool)
-    eval_env = make_eval_env(EVAL_SEED, profile.train_config)
+    eval_env = make_eval_env(EVAL_SEED, profile.test_config)
 
     model = PPO.load(model_path, env=env, device="auto")
     model.tensorboard_log = tensorboard_dir
@@ -383,6 +442,10 @@ def transfer_train(
     curriculum_config = get_curriculum_config()
     save_config(curriculum_config, config_dir, CURRICULUM_YAML)
 
+    deploy_config = build_deploy_config(eval_env, PARAMS)
+    if deploy_config is not None:
+        save_config(deploy_config, config_dir, DEPLOY_YAML)
+
     callbacks = [
         WandbCallback(gradient_save_freq=0, verbose=2),
         get_ckpt_callback(models_dir=models_dir, save_freq=CKPT_SAVE_FREQ),
@@ -393,6 +456,12 @@ def transfer_train(
     )
     if curriculum_cb is not None:
         callbacks.append(curriculum_cb)
+    obs_min_max_cb = make_obs_min_max_callback(profile.train_config, config_dir, OBS_MIN_MAX_YAML)
+    if obs_min_max_cb is not None:
+        callbacks.append(obs_min_max_cb)
+    instability_cb = make_instability_callback(profile.train_config)
+    if instability_cb is not None:
+        callbacks.append(instability_cb)
 
     print("\nStarting transfer training...")
 
@@ -413,6 +482,8 @@ def transfer_train(
     print(f"Final model saved: {final_model_path}.zip")
     print(f"New run ID: {new_run_id}")
 
+    aggregate_and_print_obs_min_max(env)
+    aggregate_and_print_instability_count(env)
     env.close()
     eval_env.close()
 

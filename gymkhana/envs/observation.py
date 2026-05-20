@@ -1,3 +1,5 @@
+"""Observation types for the Gym-Khana environment."""
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -11,32 +13,23 @@ from gymkhana.envs.utils import calculate_norm_bounds, normalize_feature
 
 
 def sample_lookahead_curvatures(track, current_s: float, n_points: int, ds: float) -> np.ndarray:
-    """
-    Sample N curvature values ahead of vehicle at uniform intervals along centerline.
+    """Sample curvature values ahead of the vehicle along the centerline.
 
-    Sampling starts at ds meters ahead (not at current position) and proceeds forward.
-    For closed tracks, sampling wraps around using modulo arithmetic.
+    Sampling starts at ``ds`` meters ahead (not at current position) and
+    proceeds forward at uniform intervals. For closed tracks, sampling wraps
+    around using modulo arithmetic.
 
-    Parameters
-    ----------
-    track : Track
-        Track object with centerline (must not be None)
-    current_s : float
-        Current arc length position on centerline (meters)
-    n_points : int
-        Number of lookahead points to sample (default 10)
-    ds : float
-        Spacing between points in meters (default 0.3m = 30cm)
+    Args:
+        track: Track object with a valid centerline.
+        current_s: Current arc length position on centerline (meters).
+        n_points: Number of lookahead points to sample.
+        ds: Spacing between points in meters.
 
-    Returns
-    -------
-    curvatures : np.ndarray (n_points,)
-        Curvature at each lookahead point (1/m)
+    Returns:
+        Curvature at each lookahead point (1/m), shape ``(n_points,)``.
 
-    Raises
-    ------
-    ValueError
-        If track, centerline, or spline is None/invalid
+    Raises:
+        ValueError: If track, centerline, or spline is None/invalid.
     """
     # Validate inputs
     if track is None or not hasattr(track, "centerline") or track.centerline is None:
@@ -103,32 +96,18 @@ def _find_spline_segment(spline_x: np.ndarray, s: float) -> int:
 def _sample_curvatures_numba(
     current_s: float, n_points: int, ds: float, track_length: float, spline_x: np.ndarray, spline_c: np.ndarray
 ) -> np.ndarray:
-    """
-    Numba-optimized curvature sampling using pre-extracted spline coefficients.
+    """Numba-optimized curvature sampling from pre-extracted spline coefficients.
 
-    This is a high-performance alternative to sample_lookahead_curvatures() for real-time
-    applications. It bypasses the scipy CubicSpline interface and directly computes
-    curvature from spline derivatives for accuracy.
+    Args:
+        current_s: Current arc length position on centerline (meters).
+        n_points: Number of lookahead points to sample.
+        ds: Spacing between points in meters.
+        track_length: Total track length for wrap-around.
+        spline_x: Spline knot positions (arc lengths from ``centerline.spline.x``).
+        spline_c: Spline coefficients of shape ``(4, n_segments, n_states)``.
 
-    Parameters
-    ----------
-    current_s : float
-        Current arc length position on centerline (meters)
-    n_points : int
-        Number of lookahead points to sample
-    ds : float
-        Spacing between points in meters
-    track_length : float
-        Total track length for wrap-around
-    spline_x : np.ndarray
-        Spline knot positions (arc lengths from centerline.spline.x)
-    spline_c : np.ndarray
-        Spline coefficients (4, n_segments, n_states) (from centerline.spline.c)
-
-    Returns
-    -------
-    curvatures : np.ndarray (n_points,)
-        Curvature at each lookahead point (1/m)
+    Returns:
+        Curvature at each lookahead point (1/m), shape ``(n_points,)``.
     """
     curvatures = np.zeros(n_points, dtype=np.float32)
 
@@ -167,33 +146,22 @@ def _sample_curvatures_numba(
 
 
 def sample_lookahead_curvatures_fast(track, current_s: float, n_points: int = 10, ds: float = 0.3) -> np.ndarray:
-    """
-    High-performance version of sample_lookahead_curvatures using numba JIT compilation.
+    """Numba-accelerated version of :func:`sample_lookahead_curvatures`.
 
-    This function provides ~20x speedup for real-time applications by using numba
-    to compile the curvature sampling loop. Use this when performance is critical
-    (e.g., high-frequency control loops at 100Hz+).
+    Bypasses the scipy CubicSpline interface and computes curvature directly
+    from spline derivatives, providing a significant speedup for real-time use.
 
-    Parameters
-    ----------
-    track : Track
-        Track object with centerline (must not be None)
-    current_s : float
-        Current arc length position on centerline (meters)
-    n_points : int
-        Number of lookahead points to sample (default 10)
-    ds : float
-        Spacing between points in meters (default 0.3m = 30cm)
+    Args:
+        track: Track object with a valid centerline.
+        current_s: Current arc length position on centerline (meters).
+        n_points: Number of lookahead points to sample (default 10).
+        ds: Spacing between points in meters (default 0.3).
 
-    Returns
-    -------
-    curvatures : np.ndarray (n_points,)
-        Curvature at each lookahead point (1/m)
+    Returns:
+        Curvature at each lookahead point (1/m), shape ``(n_points,)``.
 
-    Raises
-    ------
-    ValueError
-        If track, centerline, or spline is None/invalid
+    Raises:
+        ValueError: If track, centerline, or spline is None/invalid.
     """
     # Validate inputs (same as non-optimized version)
     if track is None or not hasattr(track, "centerline") or track.centerline is None:
@@ -220,32 +188,23 @@ def sample_lookahead_curvatures_fast(track, current_s: float, n_points: int = 10
 
 
 def sample_lookahead_widths(track, current_s: float, n_points: int, ds: float) -> np.ndarray:
-    """
-    Sample N track width values ahead of vehicle at uniform intervals along centerline.
+    """Sample total track width values ahead of the vehicle along the centerline.
 
-    Sampling starts at ds meters ahead (not at current position) and proceeds forward.
-    For closed tracks, sampling wraps around using modulo arithmetic.
+    Sampling starts at ``ds`` meters ahead (not at current position) and
+    proceeds forward at uniform intervals. Returns zeros if width data is
+    unavailable.
 
-    Parameters
-    ----------
-    track : Track
-        Track object with centerline (must not be None)
-    current_s : float
-        Current arc length position on centerline (meters)
-    n_points : int
-        Number of lookahead points to sample (default 10)
-    ds : float
-        Spacing between points in meters (default 0.3m = 30cm)
+    Args:
+        track: Track object with a valid centerline.
+        current_s: Current arc length position on centerline (meters).
+        n_points: Number of lookahead points to sample.
+        ds: Spacing between points in meters.
 
-    Returns
-    -------
-    widths : np.ndarray (n_points,)
-        Total track width (w_left + w_right) at each lookahead point (meters)
+    Returns:
+        Total track width (w_left + w_right) at each point (meters), shape ``(n_points,)``.
 
-    Raises
-    ------
-    ValueError
-        If track, centerline, or width data is None/invalid
+    Raises:
+        ValueError: If track or centerline is None/invalid.
     """
     # Validate inputs
     if track is None or not hasattr(track, "centerline") or track.centerline is None:
@@ -292,23 +251,14 @@ def sample_lookahead_widths(track, current_s: float, n_points: int, ds: float) -
 
 @njit(cache=True)
 def _binary_search_nearest(arr: np.ndarray, target: float) -> int:
-    """
-    Find index of nearest value in monotonically increasing sorted array using binary search.
+    """Find index of nearest value in a monotonically increasing sorted array.
 
-    This provides O(log n) complexity instead of O(n) for linear search, resulting in
-    significant performance improvements for tracks with many centerline points.
+    Args:
+        arr: Sorted arc length values (monotonically increasing).
+        target: Target value to find nearest neighbor for.
 
-    Parameters
-    ----------
-    arr : np.ndarray
-        Sorted array of arc length values (monotonically increasing)
-    target : float
-        Target value to find nearest neighbor for
-
-    Returns
-    -------
-    int
-        Index of the nearest value in arr
+    Returns:
+        Index of the nearest value in ``arr``.
     """
     n = len(arr)
 
@@ -345,34 +295,19 @@ def _sample_widths_numba(
     w_lefts: np.ndarray,
     w_rights: np.ndarray,
 ) -> np.ndarray:
-    """
-    Numba-optimized width sampling using pre-extracted arc length and width arrays.
+    """Numba-optimized width sampling from pre-extracted arc length and width arrays.
 
-    This is a high-performance alternative to sample_lookahead_widths() for real-time
-    applications. It uses nearest-neighbor interpolation with binary search for O(log n)
-    complexity, providing ~5-10x speedup over linear search for typical tracks.
+    Args:
+        current_s: Current arc length position on centerline (meters).
+        n_points: Number of lookahead points to sample.
+        ds: Spacing between points in meters.
+        track_length: Total track length for wrap-around.
+        ss: Arc length values from centerline (monotonically increasing).
+        w_lefts: Left track widths from centerline.
+        w_rights: Right track widths from centerline.
 
-    Parameters
-    ----------
-    current_s : float
-        Current arc length position on centerline (meters)
-    n_points : int
-        Number of lookahead points to sample
-    ds : float
-        Spacing between points in meters
-    track_length : float
-        Total track length for wrap-around
-    ss : np.ndarray
-        Arc length values from centerline (must be monotonically increasing)
-    w_lefts : np.ndarray
-        Left track widths from centerline
-    w_rights : np.ndarray
-        Right track widths from centerline
-
-    Returns
-    -------
-    widths : np.ndarray (n_points,)
-        Total track width (w_left + w_right) at each lookahead point (meters)
+    Returns:
+        Total track width (w_left + w_right) at each lookahead point (meters), shape ``(n_points,)``.
     """
     widths = np.zeros(n_points, dtype=np.float32)
 
@@ -390,33 +325,21 @@ def _sample_widths_numba(
 
 
 def sample_lookahead_widths_fast(track, current_s: float, n_points: int = 10, ds: float = 0.3) -> np.ndarray:
-    """
-    High-performance version of sample_lookahead_widths using numba JIT compilation.
+    """Numba-accelerated version of :func:`sample_lookahead_widths`.
 
-    This function provides ~1.2x speedup for real-time applications by using numba
-    to compile the width sampling loop. Use this when performance is critical
-    (e.g., high-frequency control loops at 100Hz+).
+    Uses nearest-neighbor interpolation with binary search for efficient lookup.
 
-    Parameters
-    ----------
-    track : Track
-        Track object with centerline (must not be None)
-    current_s : float
-        Current arc length position on centerline (meters)
-    n_points : int
-        Number of lookahead points to sample (default 10)
-    ds : float
-        Spacing between points in meters (default 0.3m = 30cm)
+    Args:
+        track: Track object with a valid centerline.
+        current_s: Current arc length position on centerline (meters).
+        n_points: Number of lookahead points to sample (default 10).
+        ds: Spacing between points in meters (default 0.3).
 
-    Returns
-    -------
-    widths : np.ndarray (n_points,)
-        Total track width (w_left + w_right) at each lookahead point (meters)
+    Returns:
+        Total track width (w_left + w_right) at each point (meters), shape ``(n_points,)``.
 
-    Raises
-    ------
-    ValueError
-        If track, centerline, or width data is None/invalid
+    Raises:
+        ValueError: If track or centerline is None/invalid.
     """
     # Validate inputs (same as non-optimized version)
     if track is None or not hasattr(track, "centerline") or track.centerline is None:
@@ -451,12 +374,12 @@ def sample_lookahead_widths_fast(track, current_s: float, n_points: int = 10, ds
 
 
 class Observation:
-    """
-    Abstract class for observations. Each observation must implement the space and observe methods.
+    """Abstract base class for observation types.
 
-    :param env: The environment.
-    :param vehicle_id: The id of the observer vehicle.
-    :param kwargs: Additional arguments.
+    Each subclass must implement :meth:`space` and :meth:`observe`.
+
+    Args:
+        env: The Gymnasium environment instance.
     """
 
     def __init__(self, env):
@@ -465,24 +388,47 @@ class Observation:
 
     @abstractmethod
     def space(self):
-        """
-        Defines the observation space structure for the gym env
-        :return gym.spaces object that desribes shape, data types, and observation bounds
-        """
+        """Return the Gymnasium observation space for this observation type."""
         raise NotImplementedError()
 
     @abstractmethod
     def observe(self):
-        """
-        Generated the observation data at each time step
-        :return current observation values as np array or dict
-        """
+        """Return the current observation as a numpy array or dict."""
         raise NotImplementedError()
+
+    def get_debug_features(self, agent_idx: int) -> dict:
+        """Return a flat ``{feature_name: value}`` dict for a single agent.
+
+        Used for debug overlay display. Subclasses override to handle their
+        specific ``_last_raw_features`` format.
+        """
+        if self._last_raw_features is None:
+            return {}
+        return self._last_raw_features
 
 
 class OriginalObservation(Observation):
+    """Dict-based observation with scans, poses, and velocities for all agents.
+
+    This is the legacy observation format compatible with the original f1tenth_gym.
+    Returns a dict keyed by field name, each containing a per-agent array.
+    """
+
     def __init__(self, env):
         super().__init__(env)
+        # Names of the keys produced by observe() (excluding "ego_idx")
+        self.features = [
+            "scans",
+            "poses_x",
+            "poses_y",
+            "poses_theta",
+            "linear_vels_x",
+            "linear_vels_y",
+            "ang_vels_z",
+            "collisions",
+            "lap_times",
+            "lap_counts",
+        ]
 
     def space(self):
         num_agents = self.env.unwrapped.num_agents
@@ -591,10 +537,36 @@ class OriginalObservation(Observation):
             if isinstance(observations[key], np.ndarray) or isinstance(observations[key], list):
                 observations[key] = np.array(observations[key], dtype=np.float32)
 
+        # Store raw features for debug overlay
+        self._last_raw_features = {k: observations[k] for k in observations if k != "ego_idx"}
+
         return observations
+
+    def get_debug_features(self, agent_idx: int) -> dict:
+        if self._last_raw_features is None:
+            return {}
+        result = {}
+        for k, v in self._last_raw_features.items():
+            if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] > agent_idx:
+                result[k] = v[agent_idx]
+            else:
+                result[k] = v
+        return result
 
 
 class FeaturesObservation(Observation):
+    """Dict-based observation with a configurable subset of features per agent.
+
+    Each agent gets its own sub-dict keyed by feature name. Supported features
+    include ``scan``, ``pose_x``, ``pose_y``, ``pose_theta``, ``linear_vel_x``,
+    ``linear_vel_y``, ``ang_vel_z``, ``delta``, ``beta``, ``collision``,
+    ``lap_time``, and ``lap_count``.
+
+    Args:
+        env: The Gymnasium environment instance.
+        features: List of feature names to include in the observation.
+    """
+
     def __init__(self, env, features: List[str]):
         super().__init__(env)
         self.features = features
@@ -671,13 +643,47 @@ class FeaturesObservation(Observation):
                 ):
                     obs[agent_id][key] = np.array(obs[agent_id][key], dtype=np.float32)
 
+        # Store raw features for debug overlay
+        self._last_raw_features = obs
+
         return obs
+
+    def get_debug_features(self, agent_idx: int) -> dict:
+        if self._last_raw_features is None:
+            return {}
+        agent_ids = list(self._last_raw_features.keys())
+        if agent_idx < len(agent_ids):
+            return self._last_raw_features[agent_ids[agent_idx]]
+        return self._last_raw_features[agent_ids[0]] if agent_ids else {}
 
 
 class VectorObservation(Observation):
+    """Flat vector observation for single-agent RL training.
+
+    Concatenates selected features into a 1-D numpy array. Supports optional
+    normalization to ``[-1, 1]`` when ``normalize_obs`` is enabled in the env
+    config. Also supports Frenet coordinates and lookahead curvature/width.
+
+    Args:
+        env: The Gymnasium environment instance.
+        features: Ordered list of feature names to concatenate.
+    """
+
     def __init__(self, env, features: List[str]):
         super().__init__(env)
         self.features = features
+
+        # integrated_vel_cmd is only meaningful under accl control; under speed mode it's a
+        # redundant low-pass of the user's speed command.
+        if "integrated_vel_cmd" in self.features:
+            long_type = self.env.unwrapped.action_type._longitudinal_action.type
+            if long_type != "accl":
+                raise ValueError(
+                    f"Observation feature 'integrated_vel_cmd' requires longitudinal control 'accl', "
+                    f"but the env is configured with '{long_type}'. Either switch control_input to 'accl' "
+                    f"or remove 'integrated_vel_cmd' from the observation features."
+                )
+
         self.bounds = {}
         self.normalize_obs = self.env.unwrapped.normalize_obs
         if self.normalize_obs:
@@ -709,13 +715,14 @@ class VectorObservation(Observation):
             "frenet_u": 1,
             "frenet_n": 1,
             "prev_steering_cmd": 1,
-            "prev_accl_cmd": 1,
-            "curr_accl_cmd": 1,
+            "prev_throttle_cmd": 1,
+            "curr_steering_cmd": 1,
+            "curr_throttle_cmd": 1,
             "lookahead_curvatures": lookahead_points,
             "lookahead_widths": 2 if self.env.unwrapped.sparse_width_obs else lookahead_points,
             "curr_avg_wheel_omega": 1,
             "prev_avg_wheel_omega": 1,
-            "curr_vel_cmd": 1,
+            "integrated_vel_cmd": 1,
         }
 
         complete_space_size = sum([obs_size_dict[k] for k in self.features])
@@ -753,36 +760,26 @@ class VectorObservation(Observation):
         curr_avg_wheel_omega = agent.curr_avg_wheel_omega
         prev_avg_wheel_omega = agent.prev_avg_wheel_omega
 
-        # Compute Frenet coordinates if track is available
-        frenet_u = 0.0  # heading error (0.0 default when unavailable)
-        frenet_n = 0.0  # lateral distance (0.0 default when unavailable)
-
-        # Get config values for lookahead points
+        # Defaults used when track is unavailable; otherwise overwritten below.
+        frenet_u = 0.0
+        frenet_n = 0.0
         n_lookahead = self.env.unwrapped.lookahead_n_points
         ds_lookahead = self.env.unwrapped.lookahead_ds
+        lookahead_curvatures = np.zeros(n_lookahead, dtype=np.float32)
+        n_widths = 2 if self.env.unwrapped.sparse_width_obs else n_lookahead
+        lookahead_widths = np.zeros(n_widths, dtype=np.float32)
 
-        # Get curvatures and widths for lookahead points
-        lookahead_curvatures = np.zeros(
-            n_lookahead, dtype=np.float32
-        )  # Lookahead curvatures (zeros default when unavailable)
-        lookahead_widths = np.zeros(n_lookahead, dtype=np.float32)  # Lookahead widths (zeros default when unavailable)
-
-        # Check if track and centerline are available
         track = getattr(self.env.unwrapped, "track", None)
         if track is not None and getattr(track, "centerline", None) is not None:
             try:
-                # Convert Cartesion coordinates to Frenet
-                s, ey, ephi = track.cartesian_to_frenet(
-                    x, y, theta, use_raceline=False, debug=self.env.unwrapped.debug_frenet_projection
-                )
+                # Read from GKEnv._frenet_cache populated each step. Index [0] is single-agent (asserted in space()).
+                cache = self.env.unwrapped._frenet_cache
+                s, ey, ephi = float(cache[0, 0]), float(cache[0, 1]), float(cache[0, 2])
 
-                frenet_u = float(ephi)  # heading error (vehicle heading - track heading)
-                frenet_n = float(ey)  # lateral distance from centerline (left=-ve, right=+ve)
+                frenet_u = ephi  # heading error (vehicle heading - track heading)
+                frenet_n = ey  # lateral distance from centerline (left=-ve, right=+ve)
 
-                # Sample lookahead curvatures using configured parameters n, ds
                 lookahead_curvatures = sample_lookahead_curvatures_fast(track, s, n_points=n_lookahead, ds=ds_lookahead)
-
-                # Sample lookahead widths using configured parameters n, ds
                 lookahead_widths = sample_lookahead_widths_fast(track, s, n_points=n_lookahead, ds=ds_lookahead)
 
                 if self.env.unwrapped.sparse_width_obs:
@@ -790,8 +787,8 @@ class VectorObservation(Observation):
                     lookahead_widths = np.array([lookahead_widths[0], lookahead_widths[-1]], dtype=np.float32)
 
             except Exception as e:
+                # Fall back to zero defaults set above; print so the failure is visible.
                 print(f"Frenet conversion failed: {e}")
-                # Keep NaN values to indicate computation failure
 
         # create agent's observation dict, with all possible observation values for current time step
         agent_obs = {
@@ -810,13 +807,14 @@ class VectorObservation(Observation):
             "frenet_u": frenet_u,
             "frenet_n": frenet_n,
             "prev_steering_cmd": agent.prev_steering_cmd,
-            "prev_accl_cmd": agent.prev_accl_cmd,
-            "curr_accl_cmd": agent.curr_accl_cmd,
+            "prev_throttle_cmd": agent.prev_throttle_cmd,
+            "curr_steering_cmd": agent.curr_steering_cmd,
+            "curr_throttle_cmd": agent.curr_throttle_cmd,
             "lookahead_curvatures": lookahead_curvatures,
             "lookahead_widths": lookahead_widths,
             "curr_avg_wheel_omega": curr_avg_wheel_omega,
             "prev_avg_wheel_omega": prev_avg_wheel_omega,
-            "curr_vel_cmd": agent.curr_vel_cmd,
+            "integrated_vel_cmd": agent.integrated_vel_cmd,
         }
 
         # Store raw features before normalization/flattening (for min/max tracking)
@@ -838,6 +836,23 @@ class VectorObservation(Observation):
 
 
 def observation_factory(env, type: str | None, **kwargs) -> Observation:
+    """Create an observation instance by type name.
+
+    Args:
+        env: The Gymnasium environment instance.
+        type: Observation type string. Supported values:
+            ``"original"``, ``"features"``, ``"kinematic_state"``,
+            ``"dynamic_state"``, ``"frenet_dynamic_state"``, ``"rl"``,
+            ``"drift"``, ``"drift_real"``, ``"frenet"``, ``"race"``, ``"drift_st"``.
+            Defaults to ``"original"`` if None.
+        **kwargs: Additional arguments forwarded to the observation constructor.
+
+    Returns:
+        An :class:`Observation` subclass instance.
+
+    Raises:
+        ValueError: If the type string is not recognised.
+    """
     type = type or "original"
 
     if type == "original":
@@ -853,6 +868,7 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
             "pose_y",
             "delta",
             "linear_vel_x",
+            "linear_vel_y",
             "pose_theta",
             "ang_vel_z",
             "beta",
@@ -884,10 +900,36 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
             "ang_vel_z",  # r - yaw rate
             "delta",  # δ - measured steering angle
             "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
-            "prev_steering_cmd",  # δ_ref - previous commanded steering angle
-            "prev_accl_cmd",  # ω_dot_ref - last control input (acceleration)
+            "prev_steering_cmd",  # δ_ref - previous raw action[0]
+            "prev_throttle_cmd",  # u_long_ref - previous raw action[1]
             "prev_avg_wheel_omega",  # ω - previous measured wheel speed
-            "curr_vel_cmd",  # ω_ref - current commanded velocity (integrated from acceleration)
+            "integrated_vel_cmd",  # ω_ref - velocity command integrated from acceleration (requires accl control)
+            "lookahead_curvatures",  # c - track curvatures
+            "lookahead_widths",  # w - track widths
+        ]
+        return VectorObservation(env, features=features)
+    elif type == "drift_real":
+        features = [
+            "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
+            "linear_vel_y",  # vy - lateral velocity, vehicle frame
+            "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
+            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "ang_vel_z",  # r - yaw rate
+            "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
+            "curr_avg_wheel_omega",  # ω - current measured wheel speed
+            "lookahead_curvatures",  # c - track curvatures
+            "lookahead_widths",  # w - track widths
+        ]
+        return VectorObservation(env, features=features)
+    elif type == "drift_st":
+        features = [
+            "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
+            "linear_vel_y",  # vy - lateral velocity, vehicle frame
+            "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
+            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "ang_vel_z",  # r - yaw rate
+            "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
+            "prev_steering_cmd",  # δ_ref - previous commanded steering angle
             "lookahead_curvatures",  # c - track curvatures
             "lookahead_widths",  # w - track widths
         ]

@@ -25,4 +25,6 @@
 
     "workbench.colorTheme": "GitHub Light",
     "editor.semanticHighlighting.enabled": true,
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python-envs.defaultPackageManager": "ms-python.python:pip",
 }

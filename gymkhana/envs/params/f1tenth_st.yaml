@@ -1,0 +1,21 @@
+# Default parameters for the 1/10th scale F1TENTH car (ST model).
+
+mu: 1.0489
+C_Sf: 4.718
+C_Sr: 5.4562
+lf: 0.15875
+lr: 0.17145
+h: 0.074
+m: 3.74
+I: 0.04712
+s_min: -0.52  # originally -0.4189
+s_max: 0.52  # originally 0.4189
+sv_min: -4.95 # originally -3.2
+sv_max: 4.95 # originally 3.2
+v_switch: 7.319
+a_max: 6.0 # originally 9.51
+v_min: -5.0
+v_max: 20.0
+width: 0.31
+length: 0.58
+# T_steer: 0.025  # Steering actuator time constant (s). Uncomment to enable first-order lag (requires bench ID).

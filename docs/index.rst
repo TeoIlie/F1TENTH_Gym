@@ -46,6 +46,7 @@ See :doc:`installation` to get started.
 
    configuration
    training
+   sim2real
    architecture
    controllers
    analysis
@@ -61,3 +62,9 @@ See :doc:`installation` to get started.
    api/observation
    api/action
    api/track
+
+.. toctree::
+   :caption: PROJECT
+   :maxdepth: 1
+
+   changelog

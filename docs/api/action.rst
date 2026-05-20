@@ -8,14 +8,17 @@ Source: ``gymkhana/envs/action.py``
 Action space
 ------------
 
-Actions are an ``ndarray`` of shape ``(num_agents, 2)`` where each row is ``[longitudinal, steering]``. The meaning of each column depends on the ``control_input`` config.
+Actions are an ``ndarray`` of shape ``(num_agents, 2)`` where each row is ``[steering, longitudinal]``:
+
+- ``action[0]`` — steering command (angle or velocity)
+- ``action[1]`` — longitudinal command (speed or acceleration)
 
 Control input types
 -------------------
 
-``control_input`` is a list of two strings: ``[longitudinal_type, steering_type]``.
+``control_input`` is a list of two strings — one longitudinal type and one steering type, in any order:
 
-**Longitudinal** (first element):
+**Longitudinal**:
 
 ``"speed"``
    Target velocity. Internally converted to acceleration via a P controller. Action space: ``[v_min, v_max]``.
@@ -23,7 +26,7 @@ Control input types
 ``"accl"``
    Direct acceleration command. Action space: ``[-a_max, a_max]``. Recommended for RL drift training for smooth control.
 
-**Steering** (second element):
+**Steering**:
 
 ``"steering_angle"``
    Target steering angle. Internally converted to steering velocity via a bang-bang controller. Action space: ``[s_min, s_max]``.

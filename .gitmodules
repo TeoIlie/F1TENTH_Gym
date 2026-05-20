@@ -2,7 +2,7 @@
 	path = maps
 	url = https://github.com/TeoIlie/F1TENTH_Racetracks.git
 	branch = main
-[submodule "commonroad"]
-	path = commonroad
+[submodule "examples/analysis/commonroad"]
+	path = examples/analysis/commonroad
 	url = https://github.com/TeoIlie/commonroad-vehicle-models.git
 	branch = master

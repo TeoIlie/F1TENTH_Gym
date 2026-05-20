@@ -11,7 +11,7 @@ Enable the F1TENTH Gym to train reinforcement learning agents across multiple tr
 - Agents may overfit to specific track geometry and fail to generalize
 
 ### Available Resources
-- **11 tracks total**: 7 large racing circuits (Austin, Catalunya, IMS, Monza, MoscowRaceway, Spielberg, Spielberg_blank) + 3 drift tracks (Drift, Drift2, Drift_large)
+- **11 tracks total**: 7 large racing circuits (Austin, Catalunya, IMS, Monza, MoscowRaceway, Spielberg, Spielberg_blank) + 3 drift tracks (Drift, Drift2, Drift)
 - **Parallel training**: `SubprocVecEnv` runs 32 parallel environments (2 × CPU cores)
 - **Existing randomization**: `track_direction="random"` successfully randomizes driving direction per episode
 
@@ -112,7 +112,7 @@ For example, with 32 parallel envs and 3 drift tracks, each track gets ~10-11 en
 | Catalunya       | 1.1740   | 2.2000    | 2.2000    |
 | Drift           | 2.4450   | 0.8000    | 1.0000    |
 | Drift2          | 1.4424   | 1.8000    | 2.0000    |
-| Drift_large     | 1.6023   | 1.2000    | 1.4000    |
+| Drift     | 1.6023   | 1.2000    | 1.4000    |
 | IMS             | 0.0750   | 2.2000    | 2.2000    |
 | Monza           | 1.4637   | 2.2000    | 2.2000    |
 | MoscowRaceway   | 1.3523   | 2.2000    | 2.2000    |
@@ -134,7 +134,7 @@ For example, with 32 parallel envs and 3 drift tracks, each track gets ~10-11 en
 
 **Adding new custom tracks**:
 If you add a new track with geometry outside existing bounds (e.g., tighter curvature than 2.45), you must:
-1. Run `python maps/extract_global_track_norm_bounds.py` to recalculate bounds across all tracks
+1. Run `python train/extract_global_track_norm_bounds.py` to recalculate bounds across all tracks
 2. Update the hard-coded constants in `f1tenth_gym/envs/utils.py` with the printed GLOBAL values
 3. Retrain any existing models (observation meanings have changed)
 
@@ -160,7 +160,7 @@ def compute_global_track_bounds(track_pool: list[str], track_scale: float = 1.0)
     when new tracks are added. It is NOT called at runtime.
 
     Usage:
-        python maps/extract_global_track_norm_bounds.py
+        python train/extract_global_track_norm_bounds.py
         # Or directly:
         from train.training_utils import compute_global_track_bounds
         bounds = compute_global_track_bounds(["Drift", "Drift2", "Austin", ...])
@@ -241,7 +241,7 @@ def make_subprocvecenv(
         n_envs: Number of parallel environments
         track_pool: Optional list of maps to distribute across envs.
                    If provided, envs will cycle through these maps.
-                   Example: ["Drift", "Drift2", "Drift_large"]
+                   Example: ["Drift", "Drift2", "Drift"]
 
     Returns:
         SubprocVecEnv with environments distributed across track pool (if provided)
@@ -296,7 +296,7 @@ def make_subprocvecenv(
 track_pool:
   - "Drift"
   - "Drift2"
-  - "Drift_large"
+  - "Drift"
 # For single-map training, set to null or comment out:
 # track_pool: null
 ```
@@ -378,7 +378,7 @@ The existing `make_eval_env` function requires no changes. Both training and eva
 ```python
 # Global track bounds for observation normalization
 # Pre-computed across all available tracks (Austin, Catalunya, Drift, Drift2,
-# Drift_large, IMS, Monza, MoscowRaceway, Spielberg, Spielberg_blank)
+# Drift, IMS, Monza, MoscowRaceway, Spielberg, Spielberg_blank)
 #
 # IMPORTANT: If you add a new track with geometry outside these bounds,
 # run compute_global_track_bounds() from train/training_utils.py and update these values.
@@ -442,7 +442,7 @@ With hard-coded constants in `utils.py`, no validation or logging is needed in `
 
 ---
 
-#### File 7: `maps/extract_global_track_norm_bounds.py` (NEW FILE)
+#### File 7: `train/extract_global_track_norm_bounds.py` (NEW FILE)
 **Location**: Create new file in `maps/` directory
 
 **Change**: Add helper script to extract bounds from all available tracks.
@@ -456,7 +456,7 @@ This script scans the maps/ directory for all track folders and computes
 global normalization bounds for observation normalization.
 
 Usage:
-    python maps/extract_global_track_norm_bounds.py
+    python train/extract_global_track_norm_bounds.py
 
 After running, update the constants in f1tenth_gym/envs/utils.py:
     GLOBAL_MAX_CURVATURE
@@ -518,7 +518,7 @@ When adding a new custom map to this directory:
 1. Create a new subdirectory with your map name (e.g., `maps/MyCustomTrack/`)
 2. Add required map files (see existing maps for structure)
 3. **If your track has extreme geometry** (very tight turns or unusual width):
-   - Run: `python maps/extract_global_track_norm_bounds.py`
+   - Run: `python train/extract_global_track_norm_bounds.py`
    - Update the constants in `f1tenth_gym/envs/utils.py`:
      - `GLOBAL_MAX_CURVATURE`
      - `GLOBAL_MIN_WIDTH`
@@ -543,7 +543,7 @@ for multi-map training and policy generalization.
   3. `train/config/env_config.py` - Load and export `TRACK_POOL` constant
   4. `train/ppo_race.py` - Pass `TRACK_POOL` to `make_subprocvecenv()`
   5. `f1tenth_gym/envs/utils.py` - Add hard-coded global bounds constants, use them in `calculate_norm_bounds()`
-  6. `maps/extract_global_track_norm_bounds.py` - NEW: Helper script to regenerate bounds
+  6. `train/extract_global_track_norm_bounds.py` - NEW: Helper script to regenerate bounds
   7. `maps/README.md` - UPDATE: Document bounds regeneration workflow
 - **~60 lines of code added** (including helper script and documentation)
 - **Key simplifications**:
@@ -567,7 +567,7 @@ After training with multi-map support:
    - Boundary violation frequency
 
 2. **Cross-track generalization**: Train on 2 tracks, evaluate on held-out 3rd track
-   - Example: Train on `["Drift", "Drift2"]`, test on `"Drift_large"`
+   - Example: Train on `["Drift", "Drift2"]`, test on `"Drift"`
 
 3. **Compare to baseline**: Train identical policy on single map, compare generalization
 
@@ -588,13 +588,13 @@ map: "Drift"  # Fallback/default
 track_pool:
   - "Drift"
   - "Drift2"
-  - "Drift_large"
+  - "Drift"
 ```
 
 ### Example 2: Single-Map Training (Original Behavior)
 ```yaml
 # gym_config.yaml
-map: "Drift_large"
+map: "Drift"
 track_pool: null  # Disable multi-map
 ```
 
@@ -623,7 +623,7 @@ track_pool:
 - `maps/README.md` - Document bounds regeneration workflow
 
 ### Files Created
-- `maps/extract_global_track_norm_bounds.py` - Helper script to regenerate bounds from all tracks
+- `train/extract_global_track_norm_bounds.py` - Helper script to regenerate bounds from all tracks
 
 ### Files NOT Modified (simplified from original plan)
 - `f1tenth_gym/envs/f110_env.py` - No changes needed with hard-coded constants
@@ -649,7 +649,7 @@ track_pool:
 **Validation**:
 ```python
 from train.config.env_config import TRACK_POOL
-print(TRACK_POOL)  # Should print ["Drift", "Drift2", "Drift_large"] or None
+print(TRACK_POOL)  # Should print ["Drift", "Drift2", "Drift"] or None
 ```
 
 ---
@@ -733,7 +733,7 @@ env.close()
 ---
 
 ### [X] Task 6: Add helper script and documentation
-**Files**: `maps/extract_global_track_norm_bounds.py` (new), `maps/README.md` (update)
+**Files**: `train/extract_global_track_norm_bounds.py` (new), `maps/README.md` (update)
 
 **Changes**:
 - Create `extract_global_track_norm_bounds.py` script to automate bounds extraction
@@ -741,7 +741,7 @@ env.close()
 
 **Validation**:
 ```bash
-python maps/extract_global_track_norm_bounds.py
+python train/extract_global_track_norm_bounds.py
 # Should print table of all track bounds and suggested constants
 ```
 

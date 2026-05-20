@@ -2,13 +2,18 @@
 Compares behaviour of f110 gym mb model with reference commonroad mb model to confirm matching behaviour.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.integrate import odeint
-
 from commonroad.vehiclemodels.init_mb import init_mb as init_mb_cr
 from commonroad.vehiclemodels.parameters_vehicle1 import parameters_vehicle1
 from commonroad.vehiclemodels.vehicle_dynamics_mb import vehicle_dynamics_mb as cr_vehicle_dynamics_mb
+from scipy.integrate import odeint
+
 from gymkhana.envs.dynamic_models.multi_body import init_mb
 from gymkhana.envs.dynamic_models.multi_body.multi_body import vehicle_dynamics_mb
 from gymkhana.envs.gymkhana_env import GKEnv

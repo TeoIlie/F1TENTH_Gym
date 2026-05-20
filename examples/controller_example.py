@@ -18,7 +18,7 @@ NUM_STEPS = 20_000
 
 def main():
     # Create controller using factory pattern
-    controller = create_controller("stanley", target_speed=TARGET_SPEED, map="Drift_large")
+    controller = create_controller("stanley", target_speed=TARGET_SPEED, map="Drift")
 
     env = gym.make(
         get_env_id(),

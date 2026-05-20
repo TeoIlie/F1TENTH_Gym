@@ -8,7 +8,7 @@ testpaths =[
 
 [tool.poetry]
 name = "gymkhana"
-version = "1.1.1"
+version = "1.2.0"
 description = "Gym environment for racing, drift, and safety"
 license = "MIT"
 authors = [
@@ -31,6 +31,10 @@ documentation = "https://gym-khana.readthedocs.io/en/latest/"
 packages = [
     {include = "gymkhana"},
 ]
+include = [
+    {path = "gymkhana/**/*.yaml", format = ["sdist", "wheel"]},
+]
+
 classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -39,8 +43,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[tool.poetry.urls]
+Changelog = "https://github.com/TeoIlie/Gym-Khana/blob/main/CHANGELOG.md"
+
 [tool.poetry.dependencies]
-python = ">=3.10"
+python = ">=3.10,<3.13"
 gymnasium = "^0.29.1"
 numpy = ">=1.18"
 pillow = ">=9.0.1"
@@ -62,12 +69,15 @@ ruff = "^0.15.1"
 ipykernel = "^6.29.0"
 matplotlib = "^3.8.2"
 pre-commit = "^4.5.1"
+salib = "^1.5.2"
+optuna = "^4.8.0"
+cmaes = "^0.13.0"
+optuna-dashboard = "^0.20.0"
 
 [tool.poetry.group.train.dependencies]
 wandb = "^0.17.0"
 stable-baselines3 = {extras = ["extra"], version = "^2.7.0"}
 omegaconf = "^2.3.0"
-scikit-image = "^0.25.2"
 tensorboard = "^2.20.0"
 lark = "^1.3.1"
 pydantic = "^2.12.5"
@@ -77,10 +87,12 @@ onnxruntime = ">=1.12,<1.24"
 [tool.poetry.group.docs.dependencies]
 sphinx = ">=7.0"
 sphinx_rtd_theme = ">=2.0"
+myst-parser = ">=3.0"
 
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+extend-exclude = ["maps/global_racetrajectory_optimization"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

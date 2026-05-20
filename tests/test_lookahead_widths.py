@@ -352,9 +352,9 @@ def test_sparse_width_obs_observation_filtering():
         "delta",
         "beta",
         "prev_steering_cmd",
-        "prev_accl_cmd",
+        "prev_throttle_cmd",
         "prev_avg_wheel_omega",
-        "curr_vel_cmd",
+        "integrated_vel_cmd",
         "lookahead_curvatures",
         "lookahead_widths",
     ]
@@ -366,6 +366,7 @@ def test_sparse_width_obs_observation_filtering():
         mock_env.unwrapped.sparse_width_obs = sparse_width_obs
         mock_env.unwrapped.normalize_obs = normalize_obs
         mock_env.unwrapped.agent_ids = ["agent0"]
+        mock_env.unwrapped.action_type._longitudinal_action.type = "accl"
 
         # Mock sim structure for space() method
         mock_agent = Mock()

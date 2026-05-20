@@ -1,3 +1,5 @@
+"""Track loading, Frenet coordinate conversion, and rendering."""
+
 from __future__ import annotations
 
 import pathlib
@@ -18,6 +20,8 @@ from .track_utils import find_track_dir
 
 @dataclass
 class TrackSpec(YamlDataClassConfig):
+    """Track metadata loaded from a ROS-format YAML map file."""
+
     name: Optional[str]
     image: Optional[str]
     resolution: float
@@ -29,6 +33,12 @@ class TrackSpec(YamlDataClassConfig):
 
 @dataclass
 class Track:
+    """Racing circuit with occupancy map, centerline, and raceline.
+
+    Load via :meth:`from_track_name` or :meth:`from_track_path`. Supports
+    Frenet coordinate conversion and reverse-direction driving.
+    """
+
     spec: TrackSpec
     filepath: Optional[str]
     ext: Optional[str]
@@ -45,23 +55,15 @@ class Track:
         centerline: Optional[Raceline] = None,
         raceline: Optional[Raceline] = None,
     ):
-        """
-        Initialize track object.
+        """Initialize a Track object.
 
-        Parameters
-        ----------
-        spec : TrackSpec
-            track specification
-        filepath : str
-            path to the track image
-        ext : str
-            file extension of the track image file
-        occupancy_map : np.ndarray
-            occupancy grid map
-        centerline : Raceline, optional
-            centerline of the track, by default None
-        raceline : Raceline, optional
-            raceline of the track, by default None
+        Args:
+            spec: Track specification loaded from YAML.
+            occupancy_map: Binary occupancy grid (0 = obstacle, 255 = free).
+            filepath: Path to the track image (without extension).
+            ext: File extension of the track image.
+            centerline: Centerline raceline (geometric centre of track).
+            raceline: Optimised racing line; defaults to centerline if not provided.
         """
         self.spec = spec
         self.filepath = filepath
@@ -115,20 +117,14 @@ class Track:
 
     @staticmethod
     def load_spec(track: str, filespec: str) -> TrackSpec:
-        """
-        Load track specification from yaml file.
+        """Load track specification from a YAML file.
 
-        Parameters
-        ----------
-        track : str
-            name of the track
-        filespec : str
-            path to the yaml file
+        Args:
+            track: Track name identifier.
+            filespec: Path to the YAML metadata file.
 
-        Returns
-        -------
-        TrackSpec
-            track specification
+        Returns:
+            Populated :class:`TrackSpec` instance.
         """
         with open(filespec, "r") as yaml_stream:
             map_metadata = yaml.safe_load(yaml_stream)
@@ -137,25 +133,18 @@ class Track:
 
     @staticmethod
     def from_track_name(track: str, track_scale: float = 1.0) -> Track:
-        """
-        Load track from track name.
+        """Load a track by name from the maps directory or user cache.
 
-        Parameters
-        ----------
-        track : str
-            name of the track
-        track_scale : float, optional
-            scale of the track, by default 1.0
+        Args:
+            track: Track name (must exist in the local ``maps/`` submodule or
+                ``~/.gymkhana/maps/``).
+            track_scale: Scale factor applied to coordinates (default 1.0).
 
-        Returns
-        -------
-        Track
-            track object
+        Returns:
+            Loaded :class:`Track` instance.
 
-        Raises
-        ------
-        FileNotFoundError
-            if the track cannot be loaded
+        Raises:
+            FileNotFoundError: If the track files cannot be found.
         """
         try:
             track_dir = find_track_dir(track)
@@ -171,7 +160,12 @@ class Track:
             map_filename = pathlib.Path(track_spec.image)
             image = Image.open(track_dir / str(map_filename)).transpose(Transpose.FLIP_TOP_BOTTOM)
 
-            occupancy_map = np.array(image).astype(np.float32)
+            occupancy_map = np.array(image)
+            # Handle boolean (1-bit) images by scaling to 0-255 range
+            if occupancy_map.dtype == bool:
+                occupancy_map = occupancy_map.astype(np.float32) * 255.0
+            else:
+                occupancy_map = occupancy_map.astype(np.float32)
             occupancy_map[occupancy_map <= 128] = 0.0
             occupancy_map[occupancy_map > 128] = 255.0
 
@@ -207,23 +201,17 @@ class Track:
 
     @staticmethod
     def from_track_path(path: pathlib.Path, track_scale: float = 1.0) -> Track:
-        """
-        Load track from track path.
+        """Load a track from a YAML file path.
 
-        Parameters
-        ----------
-        path : pathlib.Path
-            path to the track yaml file
+        Args:
+            path: Path to the track YAML metadata file.
+            track_scale: Scale factor applied to coordinates (default 1.0).
 
-        Returns
-        -------
-        Track
-            track object
+        Returns:
+            Loaded :class:`Track` instance.
 
-        Raises
-        ------
-        FileNotFoundError
-            if the track cannot be loaded
+        Raises:
+            FileNotFoundError: If the track files cannot be found.
         """
         try:
             if type(path) is str:
@@ -241,7 +229,12 @@ class Track:
             # Image path is from path + image name from track_spec
             image_path = path.parent / track_spec.image
             image = Image.open(image_path).transpose(Transpose.FLIP_TOP_BOTTOM)
-            occupancy_map = np.array(image).astype(np.float32)
+            occupancy_map = np.array(image)
+            # Handle boolean (1-bit) images by scaling to 0-255 range
+            if occupancy_map.dtype == bool:
+                occupancy_map = occupancy_map.astype(np.float32) * 255.0
+            else:
+                occupancy_map = occupancy_map.astype(np.float32)
             occupancy_map[occupancy_map <= 128] = 0.0
             occupancy_map[occupancy_map > 128] = 255.0
 
@@ -271,22 +264,15 @@ class Track:
 
     @staticmethod
     def from_refline(x: np.ndarray, y: np.ndarray, velx: np.ndarray):
-        """
-        Create an empty track reference line.
+        """Create a track from a reference line defined by waypoints and velocities.
 
-        Parameters
-        ----------
-        x : np.ndarray
-            x-coordinates of the waypoints
-        y : np.ndarray
-            y-coordinates of the waypoints
-        velx : np.ndarray
-            velocities at the waypoints
+        Args:
+            x: X-coordinates of the waypoints.
+            y: Y-coordinates of the waypoints.
+            velx: Velocity at each waypoint.
 
-        Returns
-        -------
-        track: Track
-            track object
+        Returns:
+            :class:`Track` instance with a synthetic occupancy map.
         """
         ds = 0.1
         resolution = 0.05
@@ -355,17 +341,16 @@ class Track:
         )
 
     def frenet_to_cartesian(self, s, ey, ephi, use_raceline=False):
-        """
-        Convert Frenet coordinates to Cartesian coordinates.
+        """Convert Frenet coordinates to Cartesian.
 
-        s: distance along the raceline
-        ey: lateral deviation
-        ephi: heading deviation
+        Args:
+            s: Arc length distance along the centerline/raceline (meters).
+            ey: Lateral deviation from the reference line (meters).
+            ephi: Heading deviation (vehicle yaw minus track yaw, radians).
+            use_raceline: If True, convert relative to raceline; else centerline.
 
-        returns:
-            x: x-coordinate
-            y: y-coordinate
-            psi: yaw angle
+        Returns:
+            Tuple ``(x, y, psi)`` — Cartesian position and yaw angle.
         """
         line = self.raceline if use_raceline else self.centerline
         x, y = line.spline.calc_position(s)
@@ -381,24 +366,24 @@ class Track:
         return x, y, psi
 
     def cartesian_to_frenet(self, x, y, phi, use_raceline=False, s_guess=0, precise=False, debug=False):
+        """Convert Cartesian coordinates to Frenet coordinates.
+
+        Args:
+            x: Vehicle x-position (from ``std_state["x"]``).
+            y: Vehicle y-position (from ``std_state["y"]``).
+            phi: Vehicle yaw angle (from ``std_state["yaw"]``).
+            use_raceline: If True, project onto raceline; else centerline.
+            s_guess: Initial arc length guess for the optimisation-based method.
+            precise: If True, use optimisation-based arc length search (requires
+                a good ``s_guess``; may fail if the guess is poor).
+            debug: If True, print validation info comparing precise vs. global search.
+
+        Returns:
+            Tuple ``(s, ey, ephi)`` — arc length, lateral deviation (meters),
+            and heading deviation (radians).
         """
-        WARNING: Only use "precise=True" if you pass an excellent s_guess.
-        More work required to validate this even works.
-
-        Convert Cartesian coordinates to Frenet coordinates.
-
-        x: x-coordinate (Cartesian coord from std_state["x"])
-        y: y-coordinate (Cartesian coord from std_state["y"])
-        phi: yaw angle (from std_state["yaw"])
-        use_raceline: Calculate with respect to raceline or centerline
-        s_guess: Initial guess for arc length calculation
-        debug: Enable debug logging and validation
-
-        returns:
-            s: arc length distance along the centerline/raceline
-            ey: lateral deviation from centerline/raceline
-            ephi: heading deviation (angle between vehicle and track heading) in radians
-        """
+        # precise=True uses an optimisation-based search which can fail without a
+        # good initial guess. The default global search (inaccurate) is more robust.
         line = self.raceline if use_raceline else self.centerline
 
         # Store vehicle position for visualization
@@ -460,45 +445,30 @@ class Track:
         return s, ey, np.arctan2(np.sin(phi), np.cos(phi))
 
     def render_centerline(self, e: EnvRenderer) -> None:
-        """
-        Render the track centerline.
+        """Render the track centerline in green.
 
-        The centerline represents the geometric center of the track and is rendered in green.
-
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object.
+        Args:
+            e: Environment renderer object.
         """
         GREEN = (0, 255, 0)
         if self.centerline is not None:
             self.centerline.render_waypoints(e, color=GREEN)
 
     def render_raceline(self, e: EnvRenderer) -> None:
-        """
-        Render the track raceline.
+        """Render the track raceline in red.
 
-        The raceline represents the optimal racing line through the track and is rendered in red.
-
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object.
+        Args:
+            e: Environment renderer object.
         """
         RED = (255, 0, 0)
         if self.raceline is not None:
             self.raceline.render_waypoints(e, color=RED)
 
     def render_both_lines(self, e: EnvRenderer) -> None:
-        """
-        Render both the centerline and raceline.
+        """Render both the centerline (green) and raceline (red).
 
-        This is a convenience method that renders both the centerline (green) and raceline (red).
-
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object.
+        Args:
+            e: Environment renderer object.
         """
         self.render_centerline(e)
         self.render_raceline(e)
@@ -512,26 +482,17 @@ class Track:
         point_size: int = 6,
         font_size: int = 10,
     ) -> None:
-        """
-        Render arc length annotations along the centerline at specified intervals.
+        """Render arc length annotations along the centerline at regular intervals.
 
-        Shows arc length values (s in Frenet coordinates) at regular intervals
-        to help identify positions along the track.
+        Useful for identifying positions along the track in Frenet coordinates.
 
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object.
-        interval : float, optional
-            Distance interval between annotations in meters, by default 5.0
-        point_color : tuple[int, int, int], optional
-            RGB color for annotation points, by default orange (255, 165, 0)
-        text_color : tuple[int, int, int], optional
-            RGB color for text labels, by default orange (255, 165, 0)
-        point_size : int, optional
-            Size of annotation points in pixels, by default 6
-        font_size : int, optional
-            Font size for text labels, by default 10
+        Args:
+            e: Environment renderer object.
+            interval: Distance between annotations in meters (default 5.0).
+            point_color: RGB color for annotation points (default orange).
+            text_color: RGB color for text labels (default orange).
+            point_size: Size of annotation points in pixels (default 6).
+            font_size: Font size for text labels (default 10).
         """
         if self.centerline is None or self.centerline.ss is None:
             return
@@ -599,28 +560,18 @@ class Track:
         line_color: tuple[int, int, int] = (255, 128, 0),  # Orange for connection line
         size: int = 8,
     ) -> None:
-        """
-        Render debug visualization of Frenet coordinate projection.
+        """Render debug visualisation of Frenet coordinate projection.
 
-        Shows:
-        - Vehicle position (magenta)
-        - Projected point on centerline (cyan)
-        - Line connecting them (orange)
+        Shows vehicle position (magenta), projected point on centerline (cyan),
+        and a connecting line (orange). Requires ``debug_frenet_projection=True``
+        in the env config to populate the debug data.
 
-        This helps diagnose if cartesian_to_frenet is finding the correct closest point.
-
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object
-        vehicle_color : tuple[int, int, int]
-            RGB color for vehicle position marker
-        projected_color : tuple[int, int, int]
-            RGB color for projected point marker
-        line_color : tuple[int, int, int]
-            RGB color for connection line
-        size : int
-            Size of rendered points in pixels
+        Args:
+            e: Environment renderer object.
+            vehicle_color: RGB color for vehicle position marker.
+            projected_color: RGB color for projected point marker.
+            line_color: RGB color for connection line.
+            size: Size of rendered points in pixels.
         """
         if self.debug_vehicle_point is None or self.debug_projected_point is None:
             return  # No data to render yet
@@ -668,32 +619,18 @@ class Track:
         color: tuple[int, int, int] = (0, 0, 255),
         size: int = 6,
     ) -> None:
-        """
-        Render lookahead curvature sampling points ahead of vehicle.
+        """Render lookahead curvature sampling points ahead of the vehicle.
 
-        Visualizes the points where curvature is sampled for drift control,
-        matching the behavior of sample_lookahead_curvatures() in observation.py.
+        Visualises the points where curvature is sampled by the observation
+        system, matching the behaviour of :func:`~gymkhana.envs.observation.sample_lookahead_curvatures`.
 
-        Parameters
-        ----------
-        e : EnvRenderer
-            Environment renderer object
-        vehicle_s : float
-            Current arc length position of vehicle on centerline (meters)
-        n_points : int, optional
-            Number of lookahead points to render (default 10)
-        ds : float, optional
-            Spacing between points in meters (default 0.3m = 30cm)
-        color : tuple[int, int, int], optional
-            RGB color tuple for points (default yellow: (255, 255, 0))
-        size : int, optional
-            Size of rendered points in pixels (default 4)
-
-        Notes
-        -----
-        - Points are sampled starting at (vehicle_s + ds), not at current position
-        - For closed tracks, sampling wraps around using modulo arithmetic
-        - Requires centerline with valid spline to be initialized
+        Args:
+            e: Environment renderer object.
+            vehicle_s: Current arc length position of vehicle (meters).
+            n_points: Number of lookahead points to render.
+            ds: Spacing between points in meters.
+            color: RGB color tuple for rendered points.
+            size: Size of rendered points in pixels.
         """
         # Check if centerline exists and has spline
         if self.centerline is None or not hasattr(self.centerline, "spline"):

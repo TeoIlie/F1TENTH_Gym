@@ -1,4 +1,5 @@
-# This file contains all parameters for the gym environment
+# This file contains training-specific gym parameters.
+# Additional defaults in public `gymkhana.drift_config` preset
 
 # =================================
 #   DEFAULT AND DRIFT/RACE CONFIG
@@ -7,54 +8,38 @@
 # Environment
 project_name: "f1tenth-ppo-drift"
 race_training_mode: "race"
-model: "std"  # Vehicle dynamics model: "std" or "mb" (multi-body)
-timestep: 0.01  # Simulation timestep in seconds
-num_agents: 1
-integrator: "rk4"  # Integration method: "rk4" or "euler"
-predictive_collision: false
-wall_deflection: false
+
+# LiDAR beams config - keep minimal for fast training, as it isn't needed
+num_beams: 2
 
 # Map
-map: "Drift_large"
+map: "Drift"
 # Multi-map training (optional)
 # If specified, parallel environments will train on different maps from this list
 # See /train/training_utils.py make_subprocvecenv
 track_pool:
-  - "Drift_large"
-  - "Drift_large"
-  - "Austin"
-  - "Monza"
+  - "Drift"
+  - "Drift_mirror"
+  # - "Drift2"
+  # - "Drift2_mirror"
 # For single-map training, set to null or comment out:
 # track_pool: null
 
-# Action
-action_input:
-  - "accl"
-  - "steering_angle"
-normalize_act: true
-
 # Observation
-obs_type: "drift"
-normalize_obs: true
 record_obs_min_max: true
-lookahead_n_points: 5
-lookahead_ds: 0.5  # Distance between lookahead points
 sparse_width_obs: true
 
 # Reset configuration
-reset_config: "cl_random_static"
 track_direction: "random"
+prevent_instability: true # enables integration instability checking with reset
 
 # Rendering/Debug settings
 test_debug_render: true
 train_debug_render: false
 
 # Callback config
-ckpt_save_freq: 5000 # reused for EvalCallback and custom CurriculumLearningCallback
-n_eval_episodes: 5
-
-# LiDAR beams config - keep minimal for fast training, as it isn't needed
-num_beams: 2
+ckpt_save_freq: 10000 # reused for EvalCallback and custom CurriculumLearningCallback
+n_eval_episodes: 15
 
 # =================================
 #   RECOVERY MODE CONFIG
@@ -64,10 +49,16 @@ recovery_project_name: "f1tenth-ppo-recover"
 recovery_training_mode: "recover"
 recovery_track_pool: null # train only on IMS
 
+# Domain randomization - multiplicative Gaussian noise from N(1, sigma) applied to selected params 
+# comment out to disable DR
+domain_randomization:
+  m: 0.05
+  I_z: 0.02
+
 # Curriculum learning - gradually expand recovery state ranges
 curriculum:
   # see train/callbacks.py for more details about parameter uses
-  enabled: true
+  enabled: false
   n_stages: 6
   window_size: 500
   success_threshold: 0.8

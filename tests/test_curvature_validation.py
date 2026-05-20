@@ -173,6 +173,8 @@ def test_curvature_visualization():
     assert len(curvatures) == len(s_samples), "Curvature samples mismatch"
     assert all(np.isfinite(curvatures)), "All curvatures must be finite"
 
+    return plt
+
 
 if __name__ == "__main__":
     """Run all curvature validation tests."""
@@ -206,8 +208,9 @@ if __name__ == "__main__":
         print(f"✗ test_lookahead_sampling FAILED: {e}")
 
     try:
-        test_curvature_visualization()
+        plt = test_curvature_visualization()
         print("✓ test_curvature_visualization passed")
+        plt.show()
     except AssertionError as e:
         print(f"✗ test_curvature_visualization FAILED: {e}")
 

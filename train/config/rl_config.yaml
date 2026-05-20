@@ -9,7 +9,17 @@ total_timesteps: 100000000  # timesteps
 n_steps: 4096  # Number of steps per rollout per environment
 start_learning_rate: 0.0003 # initial learning rate
 end_learning_rate: 0.0001 # final learning rate, with linear decay
-act_func_neg_slope: 0.2 # actor, critic LeakyReLU negative slope
+act_func_neg_slope: 0.2  # actor, critic LeakyReLU negative slope
+use_custom_relu: false   # if true, use LeakyReLU (with act_func_neg_slope) instead of default Tanh
+actor_layer_size: 64     # hidden layer size for actor (pi) network (2 layers)
+critic_layer_size: 64    # hidden layer size for critic (vf) network (2 layers)
+
+# log_std schedule for fresh training (--m t). Linear anneal init -> end over total_timesteps.
+# Closes the stochastic-vs-deterministic train/eval gap. Comment out block to disable.
+# See docs/training.rst for rationale.
+log_std_schedule:
+  init: -1.0    # σ ≈ 0.37
+  end: -3.0     # σ ≈ 0.05
 
 # Transfer/continue training defaults (mode 'f')
 additional_timesteps: 100000000  # additional timesteps for transfer/continue training

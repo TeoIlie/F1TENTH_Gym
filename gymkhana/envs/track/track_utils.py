@@ -6,7 +6,7 @@ import numpy as np
 import requests
 from numba import njit
 
-MAPS_URL = "https://github.com/TeoIlie/F1TENTH_Racetracks/releases/download/v1.4.0"
+MAPS_URL = "https://github.com/TeoIlie/F1TENTH_Racetracks/releases/download/v1.6.0"
 
 
 def find_track_dir(track_name: str) -> pathlib.Path:

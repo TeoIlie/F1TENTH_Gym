@@ -13,10 +13,10 @@ import torch.nn as nn
 import yaml
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 import wandb
-from gymkhana.envs.gymkhana_env import GKEnv
+from gymkhana.envs.gymkhana_env import GKEnv, print_obs_min_max_stats
 from gymkhana.envs.track import Track
 from gymkhana.envs.track.track_utils import get_min_max_curvature, get_min_max_track_width
 from gymkhana.envs.utils import deep_update
@@ -29,6 +29,18 @@ from train.config.env_config import (
 )
 
 
+def _validate_track_names(track_pool: list[str]) -> None:
+    """Fail fast if any name in ``track_pool`` isn't a loadable Track."""
+    for map_name in track_pool:
+        try:
+            Track.from_track_name(map_name)
+        except FileNotFoundError as e:
+            raise ValueError(
+                f"Invalid track name '{map_name}' in track_pool. "
+                f"Please check available tracks in the 'maps/' directory."
+            ) from e
+
+
 def make_subprocvecenv(seed: int, config: dict, n_envs: int, track_pool: list[str] | None = None) -> SubprocVecEnv:
     """
     Create a SubprocVecEnv parallelized environment.
@@ -38,7 +50,7 @@ def make_subprocvecenv(seed: int, config: dict, n_envs: int, track_pool: list[st
         n_envs: How many parallel envs to create
         track_pool: Optional list of maps to distribute across envs.
                    If provided, envs will cycle through these maps.
-                   Example: ["Drift", "Drift2", "Drift_large"]
+                   Example: ["Drift", "Drift2", "Drift_mirror"]
     Returns:
         SubprocVecEnv parallelized gym env distributed across track pool (if provided)
     """
@@ -51,14 +63,7 @@ def make_subprocvecenv(seed: int, config: dict, n_envs: int, track_pool: list[st
 
         # Validate all track names exist before creating subprocesses
         # This provides better error messages than subprocess failures
-        for track_name in track_pool:
-            try:
-                Track.from_track_name(track_name)
-            except FileNotFoundError as e:
-                raise ValueError(
-                    f"Invalid track name '{track_name}' in track_pool. "
-                    f"Please check available tracks in the 'maps/' directory."
-                ) from e
+        _validate_track_names(track_pool)
 
         # Create environments with different maps
         env_fns = []
@@ -84,6 +89,82 @@ def make_subprocvecenv(seed: int, config: dict, n_envs: int, track_pool: list[st
         return env
 
 
+def merge_obs_min_max(vec_env: VecEnv) -> dict | None:
+    """Merge per-subproc obs min/max trackers into a single snapshot.
+
+    Returns ``None`` if tracking is disabled in every subproc. Otherwise returns
+    a dict with ``merged`` (per-feature min/max), ``total_steps``, ``bounds``,
+    and ``normalize_obs``. Assumes identical obs config across subprocs (true
+    today — ``make_subprocvecenv`` copies one config; only ``map`` varies,
+    which doesn't affect features/bounds).
+    """
+    if not any(vec_env.get_attr("record_obs_min_max")):
+        return None
+
+    trackers = vec_env.get_attr("obs_min_max_tracker")
+    step_counts = vec_env.get_attr("obs_tracker_step_count")
+    obs_type = vec_env.get_attr("observation_type", indices=[0])[0]
+
+    features = obs_type.features
+    bounds = getattr(obs_type, "bounds", {}) or {}
+
+    merged = {
+        f: {
+            "min": min(t[f]["min"] for t in trackers),
+            "max": max(t[f]["max"] for t in trackers),
+        }
+        for f in features
+    }
+    return {
+        "merged": merged,
+        "total_steps": sum(step_counts),
+        "bounds": bounds,
+        "normalize_obs": vec_env.get_attr("normalize_obs", indices=[0])[0],
+    }
+
+
+def aggregate_and_print_obs_min_max(vec_env: SubprocVecEnv) -> None:
+    """Merge obs min/max trackers across subprocs and print one table.
+
+    Must run before ``vec_env.close()``. No-op if tracking is off everywhere.
+    """
+    snapshot = merge_obs_min_max(vec_env)
+    if snapshot is None:
+        return
+
+    print_obs_min_max_stats(
+        tracker=snapshot["merged"],
+        step_count=snapshot["total_steps"],
+        features=list(snapshot["merged"].keys()),
+        bounds=snapshot["bounds"],
+        normalize_obs=snapshot["normalize_obs"],
+    )
+
+    # env_method (not set_attr): set_attr writes onto the Monitor wrapper,
+    # leaving the inner GKEnv's flag unchanged.
+    vec_env.env_method("disable_obs_min_max_recording")
+
+
+def aggregate_and_print_instability_count(vec_env: SubprocVecEnv) -> None:
+    """Sum per-env instability-truncation counts across subprocs and print.
+
+    No-op when instability prevention is disabled in every subproc.
+    Must run before ``vec_env.close()``.
+    """
+    if not any(vec_env.get_attr("prevent_instability")):
+        return
+
+    counts = vec_env.get_attr("_instability_count")
+    total = sum(counts)
+
+    print("=" * 60)
+    print(f"Instability truncation events: {total} total across {len(counts)} envs")
+    nonzero = [(i, c) for i, c in enumerate(counts) if c > 0]
+    for i, c in nonzero:
+        print(f"  env {i}: {c}")
+    print("=" * 60)
+
+
 def compute_global_track_bounds(track_pool: list[str], track_scale: float = 1.0) -> dict:
     """
     Compute global normalization bounds across all tracks in a pool.
@@ -92,9 +173,9 @@ def compute_global_track_bounds(track_pool: list[str], track_scale: float = 1.0)
     when new tracks are added. It is not called at runtime.
 
     Usage:
-        python maps/extract_global_track_norm_bounds.py
+        python train/extract_global_track_norm_bounds.py
         # Or directly:
-        from train.training_utils import compute_global_track_bounds
+        from train.train_utils import compute_global_track_bounds
         bounds = compute_global_track_bounds(["Drift", "Drift2", "Austin", ...])
 
     Args:
@@ -250,6 +331,12 @@ def get_eval_callback(
         eval_freq: Evaluation frequency in steps (default: CKPT_SAVE_FREQ)
         n_eval_episodes: Number of episodes per evaluation (default: 5)
     """
+    num_envs = getattr(eval_env, "num_envs", 1)
+    if n_eval_episodes < num_envs:
+        raise ValueError(
+            f"n_eval_episodes ({n_eval_episodes}) must be >= eval_env.num_envs ({num_envs}) "
+            f"to evaluate every map at least once."
+        )
     return EvalCallback(
         eval_env=eval_env,
         best_model_save_path=f"{models_dir}/{BEST_MODEL}",
@@ -275,14 +362,30 @@ def log_best_eval_timestep(models_dir: str):
     print(f"\nBest eval/mean_reward: {mean_rewards[best_idx]:.2f} at timestep {timesteps[best_idx]}")
 
 
-def make_eval_env(seed: int, config: dict):
+def make_eval_env(seed: int, config: dict) -> DummyVecEnv:
+    """Build a DummyVecEnv for EvalCallback: one env per map in ``config["track_pool"]``,
+    or a single env when ``track_pool`` is ``None`` (recovery picks ``recovery_map``).
+    Forces ``record_obs_min_max=False``; pins ``track_direction`` to ``"normal"`` only
+    when it was ``"random"`` (eliminates per-episode direction noise).
     """
-    Create a single evaluation environment for EvalCallback.
-    """
-    env = gym.make(get_env_id(), config=config)
-    env = Monitor(env)
-    env.reset(seed=seed)
-    return env
+    base = {**config, "record_obs_min_max": False}
+    if base.get("track_direction") == "random":
+        base["track_direction"] = "normal"
+
+    track_pool = config.get("track_pool")
+    if track_pool is not None:
+        if not isinstance(track_pool, list) or len(track_pool) == 0:
+            raise ValueError("track_pool must be a non-empty list")
+        _validate_track_names(track_pool)
+        env_configs = [{**base, "map": m} for m in track_pool]
+        label = f"track distribution {dict(Counter(track_pool))}"
+    else:
+        env_configs = [base]
+        label = "single env (no map override; recovery uses recovery_map)"
+
+    vec_env = DummyVecEnv([make_env(seed=seed, rank=i, config=c) for i, c in enumerate(env_configs)])
+    print(f"✅ Successfully created {len(env_configs)} eval env(s) as DummyVecEnv with seed {seed}: {label}")
+    return vec_env
 
 
 def save_full_gym_config(update_config: dict, config_dir: str, filename: str) -> None:
@@ -341,7 +444,54 @@ def extract_rl_config(model: object, total_timesteps: int, n_envs: int) -> dict:
     else:
         config["learning_rate"] = float(model.learning_rate)
 
+    # Read layer sizes from the model's policy
+    net_arch = model.policy.net_arch
+    if isinstance(net_arch, dict):
+        config["actor_layer_size"] = net_arch.get("pi", [])
+        config["critic_layer_size"] = net_arch.get("vf", [])
+    else:
+        # Shared architecture (list) — same for actor and critic
+        config["actor_layer_size"] = net_arch
+        config["critic_layer_size"] = net_arch
+
+    # Record the policy's initial log_std (set via policy_kwargs at construction).
+    # The schedule's end value lives in rl_config.yaml; init is the more meaningful
+    # snapshot since by the time this runs, the schedule has already started overwriting it.
+    if hasattr(model.policy, "log_std"):
+        config["policy_log_std_current"] = model.policy.log_std.data.mean().item()
+
     return config
+
+
+def extract_norm_bounds(eval_env) -> dict | None:
+    """Extract normalization bounds from eval env's observation type, if available.
+
+    All envs in the eval DummyVecEnv share the same observation config (only
+    ``map`` differs, which doesn't affect features/bounds -- same invariant as
+    ``merge_obs_min_max``), so reading from ``envs[0]`` is sufficient.
+    Returns a serializable dict of {feature: {min, max}} or None if normalization is disabled.
+    """
+    env = eval_env.envs[0].unwrapped
+    if not env.normalize_obs:
+        return None
+    bounds = env.observation_type.bounds
+    return {name: {"min": float(lo), "max": float(hi)} for name, (lo, hi) in bounds.items()}
+
+
+def build_deploy_config(eval_env, params: dict) -> dict | None:
+    """Build deployment config bundling norm bounds with vehicle params needed at runtime.
+
+    Output is copy-pasteable into the real-car inference repo. Returns None if
+    normalization is disabled (same gate as ``extract_norm_bounds``).
+    """
+    norm_bounds = extract_norm_bounds(eval_env)
+    if norm_bounds is None:
+        return None
+    return {
+        "sim_wheel_radius": float(params["R_w"]),
+        "s_max": float(params["s_max"]),
+        "norm_bounds": norm_bounds,
+    }
 
 
 def download_model_from_wandb(run_id: str, download_dir: str, model_prefix: str, project_name: str) -> str:
@@ -398,6 +548,12 @@ def download_model_from_wandb(run_id: str, download_dir: str, model_prefix: str,
 def generate_run_id() -> str:
     """Generate a unique wandb run ID to use as both the run ID and display name."""
     return wandb.util.generate_id()
+
+
+def set_global_step_axis() -> None:
+    """Pin the wandb X-axis to ``global_step`` (= SB3 ``num_timesteps``); call after ``wandb.init``."""
+    wandb.define_metric("global_step")
+    wandb.define_metric("*", step_metric="global_step")
 
 
 def print_header(title: str) -> None:

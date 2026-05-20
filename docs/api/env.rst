@@ -39,7 +39,7 @@ Step and reset
 ``env.step(action)``
    Steps the simulation. Returns ``(obs, reward, terminated, truncated, info)``.
 
-   - ``action``: ``ndarray`` of shape ``(num_agents, 2)`` — see :doc:`../api/action` for control input types
+   - ``action``: ``ndarray`` of shape ``(num_agents, 2)`` where each row is ``[steering, longitudinal]`` — see :doc:`../api/action` for control input types
 
 ``env.reset(options=None)``
    Resets the environment. Returns ``(obs, info)``.
