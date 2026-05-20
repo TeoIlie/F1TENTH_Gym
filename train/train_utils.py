@@ -550,6 +550,12 @@ def generate_run_id() -> str:
     return wandb.util.generate_id()
 
 
+def set_global_step_axis() -> None:
+    """Pin the wandb X-axis to ``global_step`` (= SB3 ``num_timesteps``); call after ``wandb.init``."""
+    wandb.define_metric("global_step")
+    wandb.define_metric("*", step_metric="global_step")
+
+
 def print_header(title: str) -> None:
     """
     Print a formatted header for better console readability.

@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 import yaml
 from stable_baselines3.common.callbacks import BaseCallback
 
-import wandb
 from train.config.env_config import CKPT_SAVE_FREQ
 from train.train_utils import merge_obs_min_max
 
@@ -199,17 +198,13 @@ class CurriculumLearningCallback(BaseCallback):
     def _log_metrics(self) -> None:
         success_rate = sum(self.success_window) / len(self.success_window) if self.success_window else 0.0
 
-        metrics = {
-            "curriculum/success_rate": success_rate,
-            "curriculum/stage": self.current_stage,
-            "curriculum/expansion_count": self.current_stage,
-        }
+        self.logger.record("curriculum/success_rate", success_rate)
+        self.logger.record("curriculum/stage", self.current_stage)
+        self.logger.record("curriculum/expansion_count", self.current_stage)
 
         for name, r in self.ranges.items():
-            metrics[f"curriculum/{name}_lo"] = r.current_lo
-            metrics[f"curriculum/{name}_hi"] = r.current_hi
-
-        wandb.log(metrics)
+            self.logger.record(f"curriculum/{name}_lo", r.current_lo)
+            self.logger.record(f"curriculum/{name}_hi", r.current_hi)
 
 
 def make_curriculum_callback(config: dict, training_mode: str = "") -> CurriculumLearningCallback | None:
@@ -282,6 +277,7 @@ class ObsMinMaxSnapshotCallback(BaseCallback):
 
     def _on_training_end(self) -> None:
         self._snapshot()
+        self.logger.dump(self.num_timesteps)
 
     def _snapshot(self) -> None:
         snapshot = merge_obs_min_max(self.training_env)
@@ -294,16 +290,13 @@ class ObsMinMaxSnapshotCallback(BaseCallback):
             yaml.dump(payload, fh, default_flow_style=False, sort_keys=False)
 
         bounds = snapshot["bounds"]
-        metrics = {}
         for f, m in merged.items():
             theor = bounds.get(f)
             if theor is None:
                 continue
             theor_min, theor_max = theor
-            metrics[f"obs_bounds/{f}/over"] = max(0.0, m["max"] - theor_max)
-            metrics[f"obs_bounds/{f}/under"] = max(0.0, theor_min - m["min"])
-        if metrics:
-            wandb.log(metrics, step=self.num_timesteps)
+            self.logger.record(f"obs_bounds/{f}/over", max(0.0, m["max"] - theor_max))
+            self.logger.record(f"obs_bounds/{f}/under", max(0.0, theor_min - m["min"]))
 
 
 def make_obs_min_max_callback(
@@ -330,7 +323,7 @@ class InstabilityCountCallback(BaseCallback):
 
     def _log_total(self) -> None:
         counts = self.training_env.get_attr("_instability_count")
-        wandb.log({"instability/total": sum(counts)}, step=self.num_timesteps)
+        self.logger.record("instability/total", sum(counts))
 
     def _on_step(self) -> bool:
         if self.num_timesteps - self._last_log_step < self.save_freq:
@@ -341,6 +334,7 @@ class InstabilityCountCallback(BaseCallback):
 
     def _on_training_end(self) -> None:
         self._log_total()
+        self.logger.dump(self.num_timesteps)
 
 
 def make_instability_callback(train_config: dict, save_freq: int = CKPT_SAVE_FREQ) -> InstabilityCountCallback | None:

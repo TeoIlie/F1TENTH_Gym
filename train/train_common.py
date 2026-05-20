@@ -60,6 +60,7 @@ from train.train_utils import (
     print_header,
     save_config,
     save_full_gym_config,
+    set_global_step_axis,
 )
 
 
@@ -97,6 +98,7 @@ def train(profile: TrainingProfile):
         dir=proj_root,
         save_code=True,
     )
+    set_global_step_axis()
 
     tensorboard_dir, models_dir, config_dir = make_output_dirs(run.id, output_root)
     save_config(profile.train_config, config_dir, GYM_OVERRIDES_YAML)
@@ -249,6 +251,7 @@ def continue_training(profile: TrainingProfile, model_path: str, additional_time
         dir=proj_root,
         save_code=True,
     )
+    set_global_step_axis()
 
     print(f"New run ID: {new_run_id}")
 
@@ -374,6 +377,7 @@ def transfer_train(
         dir=proj_root,
         save_code=True,
     )
+    set_global_step_axis()
 
     print(f"New run ID: {new_run_id}")
 
