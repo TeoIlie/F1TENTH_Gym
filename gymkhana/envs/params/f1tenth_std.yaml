@@ -3,7 +3,7 @@
 # =========================
 # VEHICLE PARAMS
 # =========================
-m: 3.58           # [kg] total mass - measured accurately using a scale
+m: 3.633           # [kg] total mass - measured accurately using a scale
 lf: 0.176         # [m] distance from center of gravity to front axle - measured accurately by balancing the car about the CoG
 lr: 0.15          # [m] distance from center of gravity to rear axle - measured accurately by balancing the car about the CoG
 I_z: 0.0897       # [kg * m^2] moment of inertia for entire mass about z axis - currently copied from f1tenth_gym
