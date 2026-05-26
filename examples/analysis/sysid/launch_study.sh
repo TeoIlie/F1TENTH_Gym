@@ -2,9 +2,15 @@
 # Launch a parallel Optuna sysid study.
 #
 # Usage:
-#   ./launch_study.sh <bag.npz> <stage> [num_workers] [trials_per_worker] [base_params.yaml]
+#   ./launch_study.sh <bag.npz|bags.txt> <stage> [num_workers] [trials_per_worker] [base_params.yaml]
 #
-# Total trials = num_workers * trials_per_worker. Each workers logs to a separate wandb run
+# First arg is either a single .npz bag, or a .txt file containing one NPZ
+# path per line (blank lines and `#`-comments ignored). With a .txt file, the
+# study name is derived from the list filename stem, and every worker gets all
+# bags via repeated --bag flags.
+#
+# Total trials = num_workers * trials_per_worker. Each worker logs to a separate
+# wandb run under project 'f1tenth-sysid', grouped by the auto-derived study name.
 # Stage names come from STAGE_SPACES in search_spaces.py.
 #
 # Examples:
@@ -12,9 +18,7 @@
 #   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz vehicle_dyn 4 125
 #   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz stage2 4 250 \
 #       gymkhana/envs/params/f1tenth_std_optuna_stage1.yaml
-#
-# Total trials = num_workers * trials_per_worker. Each worker logs to wandb
-# under project 'f1tenth-sysid', grouped by the auto-derived study name.
+#   ./launch_study.sh examples/analysis/bags/may26_set.txt stage1 4 125
 
 set -euo pipefail
 
@@ -24,20 +28,50 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <bag.npz> <stage> [num_workers=4] [trials_per_worker=125] [base_params.yaml]"
+    echo "Usage: $0 <bag.npz|bags.txt> <stage> [num_workers=4] [trials_per_worker=125] [base_params.yaml]"
     exit 1
 fi
 
-BAG="$1"
+BAG_ARG="$1"
 STAGE="$2"
 NUM_WORKERS="${3:-4}"
 TRIALS_PER_WORKER="${4:-125}"
 BASE_PARAMS="${5:-}"
 
-if [[ ! -f "$BAG" ]]; then
-    echo "Error: bag not found: $BAG" >&2
+if [[ ! -f "$BAG_ARG" ]]; then
+    echo "Error: not found: $BAG_ARG" >&2
     exit 1
 fi
+
+# Two input modes: single .npz, or .txt bag-list file (one NPZ per line). The
+# bag-list filename stem becomes the study name so it's both deterministic and
+# meaningful (e.g. `may26_set.txt` -> study name `may26_set_stage1`).
+BAGS=()
+if [[ "$BAG_ARG" == *.txt ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Strip leading/trailing whitespace; skip blanks and `#`-comments.
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        BAGS+=("$line")
+    done < "$BAG_ARG"
+    if [[ ${#BAGS[@]} -eq 0 ]]; then
+        echo "Error: bag-list file is empty: $BAG_ARG" >&2
+        exit 1
+    fi
+    NAME_STEM=$(basename "$BAG_ARG" .txt)
+else
+    BAGS=("$BAG_ARG")
+    NAME_STEM=$(basename "$BAG_ARG" .npz)
+fi
+
+for b in "${BAGS[@]}"; do
+    if [[ ! -f "$b" ]]; then
+        echo "Error: bag not found: $b" >&2
+        exit 1
+    fi
+done
+
 # Source of truth: STAGE_SPACES keys in search_spaces.py.
 VALID_STAGES=$(python -c "from examples.analysis.sysid.search_spaces import STAGE_SPACES; print(' '.join(STAGE_SPACES))")
 if ! [[ " $VALID_STAGES " == *" $STAGE "* ]]; then
@@ -45,11 +79,16 @@ if ! [[ " $VALID_STAGES " == *" $STAGE "* ]]; then
     exit 1
 fi
 
-BAG_STEM=$(basename "$BAG" .npz)
-NAME="${BAG_STEM}_${STAGE}"
+NAME="${NAME_STEM}_${STAGE}"
 TOTAL=$(( NUM_WORKERS * TRIALS_PER_WORKER ))
 
 mkdir -p studies
+
+# Build the repeated `--bag` flags consumed by study.py.
+BAG_FLAGS=()
+for b in "${BAGS[@]}"; do
+    BAG_FLAGS+=(--bag "$b")
+done
 
 EXTRA_ARGS=()
 if [[ -n "$BASE_PARAMS" ]]; then
@@ -57,7 +96,14 @@ if [[ -n "$BASE_PARAMS" ]]; then
 fi
 
 echo "================================================================"
-echo "  bag:               $BAG"
+if [[ ${#BAGS[@]} -eq 1 ]]; then
+    echo "  bag:               ${BAGS[0]}"
+else
+    echo "  bags (${#BAGS[@]}):"
+    for b in "${BAGS[@]}"; do
+        echo "    - $b"
+    done
+fi
 echo "  stage:             $STAGE"
 echo "  workers:           $NUM_WORKERS"
 echo "  trials per worker: $TRIALS_PER_WORKER"
@@ -75,7 +121,7 @@ for ((i=1; i<=NUM_WORKERS; i++)); do
     LOG="studies/${NAME}_w${i}.log"
     echo "[worker $i] logging to $LOG"
     python -m examples.analysis.sysid.study \
-        --bag "$BAG" --stage "$STAGE" --n-trials "$TRIALS_PER_WORKER" \
+        "${BAG_FLAGS[@]}" --stage "$STAGE" --n-trials "$TRIALS_PER_WORKER" \
         --study-name "$NAME" \
         "${EXTRA_ARGS[@]}" \
         > "$LOG" 2>&1 &

@@ -143,3 +143,34 @@ def test_enqueue_trial_matches_direct_rollout(tmp_path, dataset, rollout):
         f"Enqueued trial value {study.trials[0].value} differs from direct "
         f"dataset_loss {direct_loss} — apply_trial_params or set_params likely no-opped."
     )
+
+
+# ---------- multi-bag CLI contract: --study-name required when N>1 ----------
+
+
+def test_main_requires_study_name_for_multi_bag(tmp_path, synthetic_bag_npz):
+    """Multi-bag invocations must provide --study-name explicitly — auto-naming
+    from a single bag stem is undefined for N>1. The error must surface BEFORE
+    any heavy work (dataset load, wandb init, study build); we rely on this so
+    misconfigured invocations fail fast.
+    """
+    from .conftest import make_npz
+
+    second = tmp_path / "second.npz"
+    make_npz(str(second), n=1000, speed=2.0, vy=0.1, yaw_rate=0.3, steer=0.15)
+
+    from examples.analysis.sysid.study import main
+
+    with pytest.raises(SystemExit, match="study-name is required"):
+        main(
+            [
+                "--bag",
+                synthetic_bag_npz,
+                "--bag",
+                str(second),
+                "--stage",
+                "stage1",
+                "--n-trials",
+                "1",
+            ]
+        )

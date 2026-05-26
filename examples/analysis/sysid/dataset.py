@@ -18,7 +18,8 @@ See docs/plan/OPTUNA_SYS_ID.md for the locked design decisions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import numpy as np
 from scipy.signal import savgol_filter
@@ -55,6 +56,10 @@ class Window:
     real_yaw: np.ndarray  # shape (N+1,) — unwrapped vicon_yaw
     real_beta: np.ndarray  # shape (N+1,) — arctan2(vy, vx)
     is_mirrored: bool
+    # Resolved absolute path of the source NPZ. Empty when the window was built
+    # by load_dataset directly (back-compat); stamped by load_dataset_tagged /
+    # load_datasets so multi-bag callers can group windows by origin.
+    source_bag: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,8 +72,12 @@ class Dataset:
 
 
 def mirror_window(w: Window) -> Window:
-    return Window(
-        t0_idx=w.t0_idx,
+    # Only the fields below change under L/R reflection — `replace` forwards
+    # everything else (t0_idx, source_bag, future fields) automatically so adding
+    # to Window can't silently break mirror semantics.
+    # `real_omega` is copied (not flipped) because wheel speeds are sign-symmetric.
+    return replace(
+        w,
         init_state=w.init_state * _MIRROR_INIT_SIGNS,
         cmd_steer=-w.cmd_steer,
         cmd_speed=w.cmd_speed.copy(),
@@ -76,7 +85,7 @@ def mirror_window(w: Window) -> Window:
         real_v_y=-w.real_v_y,
         real_yaw_rate=-w.real_yaw_rate,
         real_a_x=w.real_a_x.copy(),
-        real_omega=w.real_omega.copy(),  # wheel speeds are sign-symmetric under L/R mirror
+        real_omega=w.real_omega.copy(),
         real_pose=w.real_pose * _MIRROR_POSE_SIGNS,
         real_yaw=-w.real_yaw,
         real_beta=-w.real_beta,
@@ -197,4 +206,39 @@ def load_dataset(
         n_candidates=n_candidates,
         n_dropped_low_speed=n_dropped_low_speed,
         n_dropped_nonfinite=n_dropped_nonfinite,
+    )
+
+
+def load_dataset_tagged(npz_path: str, **kwargs) -> Dataset:
+    """``load_dataset`` then stamp the resolved NPZ path into each window's
+    ``source_bag``. Use this (or ``load_datasets``) whenever downstream code
+    needs to group windows by origin (multi-bag validate/study runs)."""
+    ds = load_dataset(npz_path, **kwargs)
+    resolved = str(Path(npz_path).resolve())
+    tagged = [replace(w, source_bag=resolved) for w in ds.windows]
+    return replace(ds, windows=tagged)
+
+
+def load_datasets(npz_paths: list[str], **kwargs) -> Dataset:
+    """Load N bags, tag each window with its source path, concatenate windows
+    into one Dataset. Inputs are sorted by resolved path before loading so
+    window order is deterministic regardless of CLI argument order.
+
+    Weighting is equal-per-window: a 200-window bag contributes 10× more than a
+    20-window bag. All bags share window_length_s / stride_s / min_speed /
+    mirror / dt via **kwargs forwarded to ``load_dataset``.
+    """
+    if not npz_paths:
+        raise ValueError("load_datasets requires at least one path")
+    sorted_paths = sorted({str(Path(p).resolve()) for p in npz_paths})
+    parts = [load_dataset_tagged(p, **kwargs) for p in sorted_paths]
+    dts = {p.dt for p in parts}
+    if len(dts) != 1:
+        raise ValueError(f"Heterogeneous dt across bags: {dts}")
+    return Dataset(
+        windows=[w for p in parts for w in p.windows],
+        dt=parts[0].dt,
+        n_candidates=sum(p.n_candidates for p in parts),
+        n_dropped_low_speed=sum(p.n_dropped_low_speed for p in parts),
+        n_dropped_nonfinite=sum(p.n_dropped_nonfinite for p in parts),
     )

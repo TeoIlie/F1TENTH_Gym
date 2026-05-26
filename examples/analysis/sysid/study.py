@@ -3,10 +3,18 @@
 CLI::
 
     python -m examples.analysis.sysid.study \\
-        --bag <path> --stage <name> --n-trials 500 \\
-        [--base-params <yaml>]   # default: SYSID_PARAMS
+        --bag <path> [--bag <path2> ...] --stage <name> --n-trials 500 \\
+        [--base-params <yaml>] [--study-name <name>]   # default base: SYSID_PARAMS
 
 Stage names come from ``STAGE_SPACES`` in ``search_spaces.py``.
+
+Multi-bag: ``--bag`` is repeatable. Bags are sorted by resolved path and their
+windows concatenated into one Dataset (equal-per-window weighting). With N>1
+bags, ``--study-name`` is required (single-bag still auto-derives from the bag
+stem). Provenance is stamped in three places: the output YAML header (one
+``# bag:`` line per bag), ``study.user_attrs["bags"]`` (persists in
+JournalStorage), and the wandb run config (``bags``, ``n_bags``,
+``bag_window_counts``).
 
 Re-running with the same study-name continues an existing study (Optuna's
 ``load_if_exists=True``). For parallelism, launch the same CLI N times in
@@ -21,6 +29,7 @@ import datetime as _dt
 import logging
 import math
 import sys
+from collections import Counter
 from pathlib import Path
 
 import optuna
@@ -31,7 +40,7 @@ from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend
 
 import wandb
-from examples.analysis.sysid.dataset import Dataset, load_dataset
+from examples.analysis.sysid.dataset import Dataset, load_datasets
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.loss import dataset_loss
 from examples.analysis.sysid.rollout import Rollout
@@ -145,11 +154,20 @@ def _load_base_params(override: str | None) -> dict:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m examples.analysis.sysid.study")
-    p.add_argument("--bag", required=True)
+    p.add_argument(
+        "--bag",
+        action="append",
+        required=True,
+        help="Path to a 100Hz NPZ bag. Repeat for multi-bag mode (e.g. --bag A.npz --bag B.npz).",
+    )
     p.add_argument("--stage", required=True, choices=tuple(STAGE_SPACES.keys()))
     p.add_argument("--n-trials", type=int, default=500)
     p.add_argument("--base-params", default=None, help="YAML to load (default: SYSID_PARAMS)")
-    p.add_argument("--study-name", default=None, help="Default: <bag_stem>_<stage>")
+    p.add_argument(
+        "--study-name",
+        default=None,
+        help="Default: <bag_stem>_<stage> (single-bag only); required when multiple --bag are given.",
+    )
     p.add_argument(
         "--storage", default=None, help="Path to the Optuna journal file. Default: <repo>/studies/<study_name>.journal"
     )
@@ -167,11 +185,17 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s")
     args = parse_args(argv)
 
-    bag = Path(args.bag).resolve()
-    if not bag.exists():
-        raise SystemExit(f"Bag not found: {bag}")
+    # Sort + dedup so CLI argument order doesn't change behavior (CMA-ES is seed-driven;
+    # floating-point reductions aren't associative, so window order matters in the low bits).
+    bags = sorted({Path(b).resolve() for b in args.bag})
+    for b in bags:
+        if not b.exists():
+            raise SystemExit(f"Bag not found: {b}")
 
-    name = args.study_name or f"{bag.stem}_{args.stage}"
+    if len(bags) > 1 and args.study_name is None:
+        raise SystemExit("--study-name is required when multiple --bag are given")
+    name = args.study_name or f"{bags[0].stem}_{args.stage}"
+
     journal_path = (
         Path(args.storage).resolve()
         if args.storage is not None
@@ -186,11 +210,23 @@ def main(argv: list[str] | None = None) -> int:
     space = STAGE_SPACES[args.stage]
     base_params = _load_base_params(args.base_params)
 
-    _LOG.info("Loading dataset from %s (mirror=%s)", bag, args.mirror)
-    dataset = load_dataset(str(bag), mirror=args.mirror)
-    _LOG.info("Dataset: %d windows", len(dataset.windows))
+    _LOG.info("Loading %d bag(s) (mirror=%s)", len(bags), args.mirror)
+    for b in bags:
+        _LOG.info("  bag: %s", b)
+    dataset = load_datasets([str(b) for b in bags], mirror=args.mirror)
+    # Each window carries source_bag (stamped by load_datasets) — group for per-bag visibility.
+    bag_window_counts = {b.stem: 0 for b in bags}
+    for path, count in Counter(w.source_bag for w in dataset.windows).items():
+        bag_window_counts[Path(path).stem] = count
+    for stem, count in bag_window_counts.items():
+        _LOG.info("  bag %s: %d windows", stem, count)
+    _LOG.info("Dataset: %d windows total across %d bag(s)", len(dataset.windows), len(bags))
     _LOG.info("Study: name=%s journal=%s", name, journal_path)
     study = build_study(name, journal_path, SEED)
+    # Stamp provenance into the journal so the study is self-describing even
+    # without the wandb run or the output YAML alongside.
+    study.set_user_attr("bags", [str(b) for b in bags])
+    study.set_user_attr("stage", args.stage)
 
     wandb_init_kwargs = dict(
         project=WANDB_PROJECT,
@@ -198,7 +234,9 @@ def main(argv: list[str] | None = None) -> int:
         job_type=f"stage{args.stage}",
         dir=str(REPO_ROOT),  # write wandb/ at repo root, not CWD
         config={
-            "bag": bag.stem,
+            "bags": [b.stem for b in bags],
+            "n_bags": len(bags),
+            "bag_window_counts": bag_window_counts,
             "stage": args.stage,
             "n_trials": args.n_trials,
             "seed": SEED,
@@ -224,10 +262,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     timestamp = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    # One `# bag:` line per bag — six-month-from-now-you finds this YAML and
+    # immediately knows what produced it without needing wandb or the journal.
+    bag_header_lines = "".join(f"# bag: {b}\n" for b in bags)
+    # Stage 2 typically loads Stage 1's YAML — record which one so the chain is auditable.
+    base_params_label = str(Path(args.base_params).resolve()) if args.base_params else "SYSID_PARAMS (env.py default)"
     header = (
         f"# Generated by examples/analysis/sysid/study.py @ {timestamp}\n"
-        f"# bag: {bag}\n"
+        f"{bag_header_lines}"
         f"# stage: {args.stage}\n"
+        f"# base_params: {base_params_label}\n"
         f"# study: {name} (journal: {journal_path})\n"
         f"# seed: {SEED}\n"
         f"# n_trials: {len(study.trials)}\n"

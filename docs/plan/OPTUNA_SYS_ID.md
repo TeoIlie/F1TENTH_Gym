@@ -11,7 +11,7 @@ This repo's STD (Single-Track Drift) dynamics model uses PAC2002 tire parameters
 ## Pipeline
 
 ```
-load_dataset(bag.npz)          # → list[Window]
+load_dataset(bag.npz)          # → list[Window]   (or load_datasets([...]) for multi-bag concat)
         │
         ▼
 Rollout(env)                   # one GKEnv; set_params hot-swaps PAC2002 coefficients
@@ -25,6 +25,18 @@ Optuna study (CMA-ES, JournalStorage)  # 6-D Stage-1, 4-D Stage-2
         ▼
 f1tenth_std_optuna_stage{1,2}.yaml
 ```
+
+### Multi-bag
+
+`--bag` is repeatable on both `study.py` and `validate.py`. Bags are sorted by resolved path (then deduped) and their windows concatenated into one Dataset. Weighting is **equal-per-window** — a 200-window bag contributes 10× more than a 20-window bag. All bags share the same search space, mirror flag, channel coefficients, and `dt` (asserted at load). Each `Window` carries its `source_bag` for downstream diagnostics. With N>1 bags, `--study-name` (study.py) / `--out-dir` (validate.py) is required since auto-naming from a single bag stem no longer applies.
+
+Provenance is stamped in three places so a YAML found six months later is self-describing:
+
+1. **Output YAML header** — one `# bag:` line per bag (durable, ships with the params).
+2. **Optuna study user-attrs** — `study.user_attrs["bags"]` and `["stage"]`, persisted in JournalStorage.
+3. **wandb run config** — `bags` (list of stems), `n_bags`, `bag_window_counts` (per-bag window count).
+
+`validate.py` additionally writes a per-bag raw_MSE diagnostic table in the aggregated `metrics.txt` — large variance on a channel across bags is the signal that the balanced coefficients are averaging over disagreeing bags, and the bag selection should be reconsidered.
 
 ## Module map
 
@@ -97,7 +109,7 @@ If Stage 1's results show clean chassis correction and Stage 2 isn't needed (or 
 **Run a study:**
 
 ```bash
-# Stage 1 (default base = SYSID_PARAMS)
+# Stage 1 (default base = SYSID_PARAMS), single bag
 python -m examples.analysis.sysid.study \
     --bag examples/analysis/bags/<bag>.npz \
     --stage 1 --n-trials 500
@@ -107,9 +119,16 @@ python -m examples.analysis.sysid.study \
     --bag examples/analysis/bags/<bag>.npz \
     --stage 2 --n-trials 500 \
     --base-params gymkhana/envs/params/f1tenth_std_optuna_stage1.yaml
+
+# Multi-bag (study-name required)
+python -m examples.analysis.sysid.study \
+    --bag examples/analysis/bags/<bag_a>.npz \
+    --bag examples/analysis/bags/<bag_b>.npz \
+    --stage 1 --n-trials 500 \
+    --study-name myrun_stage1
 ```
 
-Auto-derived defaults: `--study-name` is `<bag_stem>_stage{N}`, `--storage` is `<repo>/studies/<study_name>.journal` (path to the JournalStorage file), `--out-yaml` is `gymkhana/envs/params/f1tenth_std_optuna_stage{N}.yaml`. Re-running the same name continues the existing study.
+Auto-derived defaults: `--study-name` is `<bag_stem>_stage{N}` (single-bag only), `--storage` is `<repo>/studies/<study_name>.journal` (path to the JournalStorage file), `--out-yaml` is `gymkhana/envs/params/f1tenth_std_optuna_stage{N}.yaml`. Re-running the same name continues the existing study.
 
 **Parallel workers** (CMA-ES degrades past ~4):
 
@@ -119,6 +138,20 @@ for i in 1 2 3 4; do
   python -m examples.analysis.sysid.study --bag <path> --stage 1 \
     --study-name myrun_stage1 --n-trials 125 &
 done; wait
+```
+
+`launch_study.sh` wraps the above and also accepts a `.txt` bag-list file (one NPZ path per line, `#`-comments allowed) as the first positional arg — the bag-list filename stem becomes the study name and every worker gets all bags via repeated `--bag` flags:
+
+```bash
+# Single-bag
+./examples/analysis/sysid/launch_study.sh examples/analysis/bags/<bag>.npz stage1
+
+# Multi-bag via list file
+cat > examples/analysis/bags/may26_set.txt <<EOF
+examples/analysis/bags/<bag_a>.npz
+examples/analysis/bags/<bag_b>.npz
+EOF
+./examples/analysis/sysid/launch_study.sh examples/analysis/bags/may26_set.txt stage1
 ```
 
 **Live monitoring via wandb** (always on):

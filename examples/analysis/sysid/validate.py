@@ -1,18 +1,39 @@
 """Single-call validation/debugging entry point for the STD sysid pipeline.
 
-Given a 100 Hz Vicon NPZ bag and a parameter set, produces:
+Given one or more 100 Hz Vicon NPZ bags and a parameter set, produces sim-vs-real
+plots plus a metrics.txt whose `balanced CHANNEL_COEFFS` block is meant to be
+copy-pasted into `loss.py` to balance channel contributions before launching a
+study. The aggregated loss matches what `study.py` minimizes (equal-per-window
+across all bags), so coefficients tuned here transfer directly.
 
+Single-bag layout (flat, default for one --bag):
   - dataset_overview.png            — windowed bag signals
-  - dataset_overview_mirror.png     — same, mirrored windows (omitted with --no-mirror)
+  - dataset_overview_mirror.png     — same, mirrored windows (with --mirror)
   - rollout_overlay.png             — sim vs real, one segment per window
   - metrics.txt                     — window counts, drop counts, total + per-channel loss
+
+Multi-bag layout (--out-dir required, one subdir per bag):
+  <out-dir>/
+    metrics.txt                     — aggregated total + per-channel + per-bag raw_MSE table
+    <bag_stem_A>/
+      dataset_overview.png
+      dataset_overview_mirror.png   (with --mirror)
+      rollout_overlay.png
+      metrics.txt                   — per-bag breakdown
+    <bag_stem_B>/
+      ...
+
+The per-bag raw_MSE block in the aggregated metrics.txt flags heterogeneous bags
+whose union loss would be a compromise — large variance on a channel means the
+balanced coefficients are averaging over disagreeing bags.
 
 To compare two parameter sets, run twice with different `--params` /
 `--out-dir` and diff `metrics.txt`. Replaces the prior split between
 `compare_loss.py` and the `__main__` blocks of `dataset.py` / `rollout.py`.
 
-Example:
-  python -m examples.analysis.sysid.validate --bag bag.npz [--params tuned.yaml] [--mirror] [--out-dir DIR]
+Examples:
+  python -m examples.analysis.sysid.validate --bag bag.npz [--params tuned.yaml] [--mirror]
+  python -m examples.analysis.sysid.validate --bag A.npz --bag B.npz --out-dir DIR
 """
 
 from __future__ import annotations
@@ -25,7 +46,7 @@ import numpy as np
 import yaml
 from scipy.signal import savgol_filter
 
-from examples.analysis.sysid.dataset import CHANNELS, Dataset, Window, load_dataset
+from examples.analysis.sysid.dataset import CHANNELS, Dataset, Window, load_dataset_tagged
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.loss import CHANNEL_COEFFS, window_loss
 from examples.analysis.sysid.rollout import Rollout
@@ -223,15 +244,18 @@ def _check_yaw_continuity(
     return failures
 
 
-def _format_continuity_lines(failures: list[tuple[int, float, float]]) -> list[str]:
+def _format_continuity_lines(failures: list[tuple[str, int, float, float]]) -> list[str]:
+    """Format yaw-continuity failures. Each entry is `(bag_stem, t0_idx, max_sim, max_real)`;
+    the `bag_stem` tag is informational in single-bag mode and load-bearing in multi-bag mode.
+    """
     if not failures:
         return ["yaw_continuity: PASS"]
     lines = [
         f"WARN: yaw continuity check failed for {len(failures)} window(s) "
         "(per-step Δyaw > π/2; overlay plot may mislead, loss math still correct):"
     ]
-    for t0_idx, max_sim, max_real in failures:
-        lines.append(f"  t0_idx={t0_idx} max_sim_step={max_sim:.4f} max_real_step={max_real:.4f}")
+    for bag_stem, t0_idx, max_sim, max_real in failures:
+        lines.append(f"  bag={bag_stem} t0_idx={t0_idx} max_sim_step={max_sim:.4f} max_real_step={max_real:.4f}")
     return lines
 
 
@@ -474,21 +498,60 @@ def _format_channel_table(per_channel: dict[str, float]) -> list[str]:
     return lines
 
 
+def _format_per_bag_raw_mse_table(per_bag_per_channel: dict[str, dict[str, float]]) -> list[str]:
+    """Per-bag raw MSE per channel — sanity-check that bags agree.
+
+    raw_MSE = contribution / coeff (matches `_format_channel_table`). Large
+    variance across bags on a channel means the bag set is heterogeneous enough
+    that the union loss is a compromise; consider dropping or reweighting an
+    outlier bag before relying on `balanced CHANNEL_COEFFS`.
+    """
+    # Sort explicitly so column order doesn't depend on caller's dict insertion order.
+    bag_stems = sorted(per_bag_per_channel.keys())
+    col_w = max(12, max(len(s) for s in bag_stems) + 2)
+    lines = ["per-bag raw_MSE (sanity check — large variance across bags = bag selection issue):"]
+    header = f"  {'channel':<10}" + "".join(f"{s:>{col_w}}" for s in bag_stems)
+    lines.append(header)
+    lines.append("  " + "-" * (len(header) - 2))
+    for ch in CHANNELS:
+        coeff = CHANNEL_COEFFS[ch]
+        row = f"  {ch:<10}"
+        for stem in bag_stems:
+            contrib = per_bag_per_channel[stem].get(ch, float("nan"))
+            if coeff != 0.0:
+                raw = contrib / coeff
+                row += f"{raw:>{col_w}.6f}"
+            else:
+                row += f"{'n/a':>{col_w}}"
+        lines.append(row)
+    return lines
+
+
 def _write_metrics(
     out_path: str,
     *,
-    bag: Path,
+    bags: list[Path],
     params_source: str,
     args: argparse.Namespace,
     dataset: Dataset,
     total_loss: float,
     per_channel: dict[str, float],
-    continuity_failures: list[tuple[int, float, float]],
+    continuity_failures: list[tuple[str, int, float, float]],
+    per_bag_per_channel: dict[str, dict[str, float]] | None = None,
 ) -> None:
+    """Write `metrics.txt`. ``bags`` is the list scoping this report (one entry
+    for a per-bag file, all bags for the aggregated file). ``per_bag_per_channel``
+    enables the raw_MSE diagnostic block — only meaningful when N>1, ignored
+    otherwise.
+    """
     n_originals = sum(not w.is_mirrored for w in dataset.windows)
     n_mirrored = len(dataset.windows) - n_originals
+    if len(bags) == 1:
+        header_lines = [f"bag: {bags[0]}"]
+    else:
+        header_lines = ["bags:", *(f"  - {b}" for b in bags)]
     lines = [
-        f"bag: {bag}",
+        *header_lines,
         f"params: {params_source}",
         f"window_length_s: {args.window_length_s}",
         f"stride_s: {args.stride_s}",
@@ -506,9 +569,10 @@ def _write_metrics(
         f"total_loss: {total_loss:.6f}",
         "",
         *_format_channel_table(per_channel),
-        "",
-        *_format_continuity_lines(continuity_failures),
     ]
+    if per_bag_per_channel is not None and len(per_bag_per_channel) > 1:
+        lines.extend(["", *_format_per_bag_raw_mse_table(per_bag_per_channel)])
+    lines.extend(["", *_format_continuity_lines(continuity_failures)])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -523,7 +587,12 @@ def _load_params(path: str | None) -> tuple[dict, str]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m examples.analysis.sysid.validate")
-    p.add_argument("--bag", required=True, help="Path to 100Hz NPZ bag")
+    p.add_argument(
+        "--bag",
+        action="append",
+        required=True,
+        help="Path to a 100Hz NPZ bag. Repeat for multi-bag mode (e.g. --bag A.npz --bag B.npz).",
+    )
     p.add_argument("--params", default=None, help="YAML param file (default: SYSID_PARAMS)")
     p.add_argument("--window-length-s", type=float, default=1.5)
     p.add_argument("--stride-s", type=float, default=0.5)
@@ -535,79 +604,148 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Include mirrored windows (default: False, matches study.py)",
     )
-    p.add_argument("--out-dir", default=None, help="Default: figures/analysis/sysid/<bag_stem>/")
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help="Default: figures/analysis/sysid/<bag_stem>/ (single-bag); required for multi-bag.",
+    )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    bag = Path(args.bag).resolve()
-    if not bag.exists():
-        raise SystemExit(f"Bag not found: {bag}")
+    # Sort + dedup so CLI argument order doesn't change output, and repeats are harmless.
+    bags = sorted({Path(b).resolve() for b in args.bag})
+    for b in bags:
+        if not b.exists():
+            raise SystemExit(f"Bag not found: {b}")
+    multi = len(bags) > 1
+    if multi and args.out_dir is None:
+        raise SystemExit("--out-dir is required when multiple --bag are given")
 
     params, params_source = _load_params(args.params)
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else Path("figures") / "analysis" / "sysid" / bag.stem
+    if args.out_dir:
+        out_dir = Path(args.out_dir).resolve()
+    else:
+        out_dir = (Path("figures") / "analysis" / "sysid" / bags[0].stem).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = load_dataset(
-        str(bag),
-        window_length_s=args.window_length_s,
-        stride_s=args.stride_s,
-        min_speed=args.min_speed,
-        mirror=args.mirror,
-    )
-    n_originals = sum(not w.is_mirrored for w in dataset.windows)
-    n_mirrored = len(dataset.windows) - n_originals
-    print(
-        f"loaded {len(dataset.windows)} windows from {bag} "
-        f"(originals={n_originals}, mirrored={n_mirrored}, "
-        f"dropped_low_speed={dataset.n_dropped_low_speed}, "
-        f"dropped_nonfinite={dataset.n_dropped_nonfinite}, "
-        f"candidates={dataset.n_candidates})"
+    # Per-bag loads carry source_bag stamping + their own n_candidates/drop stats.
+    per_bag_datasets: list[tuple[Path, Dataset]] = []
+    for bp in bags:
+        ds = load_dataset_tagged(
+            str(bp),
+            window_length_s=args.window_length_s,
+            stride_s=args.stride_s,
+            min_speed=args.min_speed,
+            mirror=args.mirror,
+        )
+        per_bag_datasets.append((bp, ds))
+
+    dts = {ds.dt for _, ds in per_bag_datasets}
+    if len(dts) != 1:
+        raise ValueError(f"Heterogeneous dt across bags: {dts}")
+
+    # Combined view scoped to the aggregated metrics file. Matches what study.py
+    # builds via load_datasets() — equal-per-window across all bags.
+    combined = Dataset(
+        windows=[w for _, ds in per_bag_datasets for w in ds.windows],
+        dt=per_bag_datasets[0][1].dt,
+        n_candidates=sum(ds.n_candidates for _, ds in per_bag_datasets),
+        n_dropped_low_speed=sum(ds.n_dropped_low_speed for _, ds in per_bag_datasets),
+        n_dropped_nonfinite=sum(ds.n_dropped_nonfinite for _, ds in per_bag_datasets),
     )
 
-    _plot_dataset_overview(dataset, str(bag), str(out_dir / "dataset_overview.png"), mirror=False)
-    print(f"saved {out_dir / 'dataset_overview.png'}")
-    if args.mirror:
-        _plot_dataset_overview(dataset, str(bag), str(out_dir / "dataset_overview_mirror.png"), mirror=True)
-        print(f"saved {out_dir / 'dataset_overview_mirror.png'}")
+    for bp, ds in per_bag_datasets:
+        n_orig = sum(not w.is_mirrored for w in ds.windows)
+        n_mir = len(ds.windows) - n_orig
+        print(
+            f"loaded {len(ds.windows)} windows from {bp} "
+            f"(originals={n_orig}, mirrored={n_mir}, "
+            f"dropped_low_speed={ds.n_dropped_low_speed}, "
+            f"dropped_nonfinite={ds.n_dropped_nonfinite}, "
+            f"candidates={ds.n_candidates})"
+        )
 
-    originals = [w for w in dataset.windows if not w.is_mirrored]
-    warmup_steps = int(round(args.warmup_s / dataset.dt))
-    min_window_len = min(len(w.real_v_x) for w in dataset.windows)
+    warmup_steps = int(round(args.warmup_s / combined.dt))
+    min_window_len = min(len(w.real_v_x) for w in combined.windows)
     if warmup_steps >= min_window_len:
         raise SystemExit(
-            f"--warmup-s={args.warmup_s} ({warmup_steps} steps at dt={dataset.dt}) "
+            f"--warmup-s={args.warmup_s} ({warmup_steps} steps at dt={combined.dt}) "
             f"leaves no scored samples (shortest window has {min_window_len} samples)"
         )
+
     totals: list[float] = []
     accum: dict[str, list[float]] = {ch: [] for ch in CHANNELS}
+    per_bag_per_channel_mean: dict[str, dict[str, float]] = {}
+    all_continuity_failures: list[tuple[str, int, float, float]] = []
 
     with Rollout(params=params) as rollout:
-        # One sim per original window — traces feed both the overlay and the loss.
-        # Mirrored windows still need their own pass through `rollout.run`.
-        sim_traces = [rollout.run_debug(w) for w in originals]
-        _plot_rollout_overlay(
-            dataset, originals, sim_traces, str(bag), str(out_dir / "rollout_overlay.png"), warmup_s=args.warmup_s
-        )
-        print(f"saved {out_dir / 'rollout_overlay.png'}")
+        for bp, ds in per_bag_datasets:
+            # multi=False keeps the legacy flat layout for single-bag callers.
+            bag_subdir = (out_dir / bp.stem) if multi else out_dir
+            bag_subdir.mkdir(parents=True, exist_ok=True)
 
-        continuity_failures = _check_yaw_continuity(originals, sim_traces)
-        for line in _format_continuity_lines(continuity_failures):
-            print(line)
+            _plot_dataset_overview(ds, str(bp), str(bag_subdir / "dataset_overview.png"), mirror=False)
+            print(f"saved {bag_subdir / 'dataset_overview.png'}")
+            if args.mirror:
+                _plot_dataset_overview(ds, str(bp), str(bag_subdir / "dataset_overview_mirror.png"), mirror=True)
+                print(f"saved {bag_subdir / 'dataset_overview_mirror.png'}")
 
-        for w, tr in zip(originals, sim_traces):
-            total, per_ch = window_loss(_debug_to_loss_sim(tr), w, CHANNEL_COEFFS, warmup_steps)
-            totals.append(total)
+            originals = [w for w in ds.windows if not w.is_mirrored]
+            # One sim per original window — traces feed both the overlay and the loss.
+            # Mirrored windows still need their own pass through `rollout.run`.
+            sim_traces = [rollout.run_debug(w) for w in originals]
+            _plot_rollout_overlay(
+                ds,
+                originals,
+                sim_traces,
+                str(bp),
+                str(bag_subdir / "rollout_overlay.png"),
+                warmup_s=args.warmup_s,
+            )
+            print(f"saved {bag_subdir / 'rollout_overlay.png'}")
+
+            bag_failures = [(bp.stem, t0, ms, mr) for (t0, ms, mr) in _check_yaw_continuity(originals, sim_traces)]
+            for line in _format_continuity_lines(bag_failures):
+                print(line)
+            all_continuity_failures.extend(bag_failures)
+
+            bag_totals: list[float] = []
+            bag_accum: dict[str, list[float]] = {ch: [] for ch in CHANNELS}
+            for w, tr in zip(originals, sim_traces):
+                total, per_ch = window_loss(_debug_to_loss_sim(tr), w, CHANNEL_COEFFS, warmup_steps)
+                bag_totals.append(total)
+                for ch in CHANNELS:
+                    bag_accum[ch].append(per_ch[ch])
+            for w in ds.windows:
+                if not w.is_mirrored:
+                    continue
+                total, per_ch = window_loss(rollout.run(w), w, CHANNEL_COEFFS, warmup_steps)
+                bag_totals.append(total)
+                for ch in CHANNELS:
+                    bag_accum[ch].append(per_ch[ch])
+
+            bag_total_loss = float(np.mean(bag_totals))
+            bag_per_channel = {ch: float(np.mean(bag_accum[ch])) for ch in CHANNELS}
+            per_bag_per_channel_mean[bp.stem] = bag_per_channel
+
+            if multi:
+                _write_metrics(
+                    str(bag_subdir / "metrics.txt"),
+                    bags=[bp],
+                    params_source=params_source,
+                    args=args,
+                    dataset=ds,
+                    total_loss=bag_total_loss,
+                    per_channel=bag_per_channel,
+                    continuity_failures=bag_failures,
+                )
+                print(f"saved {bag_subdir / 'metrics.txt'}")
+
+            totals.extend(bag_totals)
             for ch in CHANNELS:
-                accum[ch].append(per_ch[ch])
-        for w in dataset.windows:
-            if not w.is_mirrored:
-                continue
-            total, per_ch = window_loss(rollout.run(w), w, CHANNEL_COEFFS, warmup_steps)
-            totals.append(total)
-            for ch in CHANNELS:
-                accum[ch].append(per_ch[ch])
+                accum[ch].extend(bag_accum[ch])
 
     total_loss = float(np.mean(totals))
     per_channel = {ch: float(np.mean(accum[ch])) for ch in CHANNELS}
@@ -620,13 +758,14 @@ def main(argv: list[str] | None = None) -> int:
     metrics_path = out_dir / "metrics.txt"
     _write_metrics(
         str(metrics_path),
-        bag=bag,
+        bags=bags,
         params_source=params_source,
         args=args,
-        dataset=dataset,
+        dataset=combined,
         total_loss=total_loss,
         per_channel=per_channel,
-        continuity_failures=continuity_failures,
+        continuity_failures=all_continuity_failures,
+        per_bag_per_channel=per_bag_per_channel_mean if multi else None,
     )
     print(f"saved {metrics_path}")
     return 0
