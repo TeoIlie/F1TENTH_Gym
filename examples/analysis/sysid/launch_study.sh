@@ -14,11 +14,11 @@
 # Stage names come from STAGE_SPACES in search_spaces.py.
 #
 # Examples:
-#   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz stage1
+#   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz steer_lag
 #   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz vehicle_dyn 4 125
-#   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz stage2 4 250 \
-#       gymkhana/envs/params/f1tenth_std_optuna_stage1.yaml
-#   ./launch_study.sh examples/analysis/bags/may26_set.txt stage1 4 125
+#   ./launch_study.sh examples/analysis/bags/rosbag2_2026_05_04-17_54_17_100Hz.npz fine_tune 4 500 \
+#       gymkhana/envs/params/f1tenth_std_optuna_vehicle_dyn.yaml
+#   ./launch_study.sh examples/analysis/bags/may26_set.txt vehicle_dyn 4 125
 
 set -euo pipefail
 
@@ -45,7 +45,7 @@ fi
 
 # Two input modes: single .npz, or .txt bag-list file (one NPZ per line). The
 # bag-list filename stem becomes the study name so it's both deterministic and
-# meaningful (e.g. `may26_set.txt` -> study name `may26_set_stage1`).
+# meaningful (e.g. `may26_set.txt` -> study name `may26_set_vehicle_dyn`).
 BAGS=()
 if [[ "$BAG_ARG" == *.txt ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
