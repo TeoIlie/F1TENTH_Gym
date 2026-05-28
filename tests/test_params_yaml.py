@@ -74,6 +74,7 @@ _STP_PACEJKA_KEYS = {"B_f", "C_f", "D_f", "E_f", "B_r", "C_r", "D_r", "E_r"}
         ("f1fifth", _COMMON_KEYS | _LINEAR_TIRE_KEYS | {"I"}),
         ("f1tenth_st", _COMMON_KEYS | _LINEAR_TIRE_KEYS | {"I"}),
         ("f1tenth_std", _COMMON_KEYS | _STD_MEASURABLE_KEYS | _PAC2002_TIRE_KEYS),
+        ("f1tenth_std_new_tire_covers", _COMMON_KEYS | _STD_MEASURABLE_KEYS | _PAC2002_TIRE_KEYS),
         (
             "f1tenth_std_drift_bias",
             _COMMON_KEYS | _LINEAR_TIRE_KEYS | _STD_MEASURABLE_KEYS | _PAC2002_TIRE_KEYS,
@@ -95,6 +96,7 @@ def test_yaml_values_are_numeric():
         "f1fifth",
         "f1tenth_st",
         "f1tenth_std",
+        "f1tenth_std_new_tire_covers",
         "f1tenth_std_drift_bias",
         "f1tenth_stp",
     ):
