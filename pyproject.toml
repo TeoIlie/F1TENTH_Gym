@@ -75,7 +75,7 @@ cmaes = "^0.13.0"
 optuna-dashboard = "^0.20.0"
 
 [tool.poetry.group.train.dependencies]
-wandb = "^0.17.0"
+wandb = "^0.27.0"
 stable-baselines3 = {extras = ["extra"], version = "^2.7.0"}
 omegaconf = "^2.3.0"
 tensorboard = "^2.20.0"
