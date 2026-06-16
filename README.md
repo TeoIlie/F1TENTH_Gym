@@ -59,6 +59,7 @@ git clone --recurse-submodules https://github.com/TeoIlie/Gym-Khana.git
 cd Gym-Khana
 poetry install --all-groups
 source $(poetry env info -p)/bin/activate # or instead of sourcing, prefix commands with `poetry run`
+pre-commit install # wire up the git hook for ruff formatting/linting on commit
 ```
 
 Then you're off to the races! 🏎️
@@ -311,6 +312,8 @@ Custom maps can be created using the git submodule <https://github.com/TeoIlie/F
 ### Formatting/Linting
 
 Run formatting and auto-fixes manually with `ruff check --fix . && ruff format .` Fixes also are applied before commits due to `.pre-commit-config.yaml` file, with `pre-commit` dependency.
+
+`poetry install` provides `pre-commit`, but the git hook is wired up once per clone with `pre-commit install`. After that, ruff runs on staged files at every commit. Run `pre-commit run --all-files` to check the whole repo.
 
 ### Documentation
 
