@@ -33,13 +33,13 @@ from collections import Counter
 from pathlib import Path
 
 import optuna
+import wandb
 import yaml
 from optuna.distributions import BaseDistribution, FloatDistribution
 from optuna.samplers import CmaEsSampler
 from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend
 
-import wandb
 from examples.analysis.sysid.dataset import Dataset, load_datasets
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.loss import dataset_loss
