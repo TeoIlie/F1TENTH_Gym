@@ -2,10 +2,10 @@ import os
 
 import gymnasium as gym
 import numpy as np
+import wandb
 from stable_baselines3 import PPO
 from wandb.integration.sb3 import WandbCallback
 
-import wandb
 from train.config.env_config import PROJECT_NAME, SEED
 from train.train_utils import get_ckpt_callback, get_output_dirs, make_output_dirs
 

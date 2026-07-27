@@ -10,12 +10,12 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch.nn as nn
+import wandb
 import yaml
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
-import wandb
 from gymkhana.envs.gymkhana_env import GKEnv, print_obs_min_max_stats
 from gymkhana.envs.track import Track
 from gymkhana.envs.track.track_utils import get_min_max_curvature, get_min_max_track_width

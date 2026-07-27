@@ -9,11 +9,11 @@ from functools import partial
 
 import gymnasium as gym
 import numpy as np
+import wandb
 from stable_baselines3 import PPO
 from stable_baselines3.common.policies import BasePolicy
 from wandb.integration.sb3 import WandbCallback
 
-import wandb
 from train.callbacks import (
     LogStdScheduleCallback,
     make_curriculum_callback,
