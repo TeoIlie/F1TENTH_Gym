@@ -478,6 +478,22 @@ def extract_norm_bounds(eval_env) -> dict | None:
     return {name: {"min": float(lo), "max": float(hi)} for name, (lo, hi) in bounds.items()}
 
 
+def build_deploy_config(eval_env, params: dict) -> dict | None:
+    """Build deployment config bundling norm bounds with vehicle params needed at runtime.
+
+    Output is copy-pasteable into the real-car inference repo. Returns None if
+    normalization is disabled (same gate as ``extract_norm_bounds``).
+    """
+    norm_bounds = extract_norm_bounds(eval_env)
+    if norm_bounds is None:
+        return None
+    return {
+        "sim_wheel_radius": float(params["R_w"]),
+        "s_max": float(params["s_max"]),
+        "norm_bounds": norm_bounds,
+    }
+
+
 def download_model_from_wandb(run_id: str, download_dir: str, model_prefix: str, project_name: str) -> str:
     """
     Download model from wandb and return the path to cached model.
@@ -532,6 +548,12 @@ def download_model_from_wandb(run_id: str, download_dir: str, model_prefix: str,
 def generate_run_id() -> str:
     """Generate a unique wandb run ID to use as both the run ID and display name."""
     return wandb.util.generate_id()
+
+
+def set_global_step_axis() -> None:
+    """Pin the wandb X-axis to ``global_step`` (= SB3 ``num_timesteps``); call after ``wandb.init``."""
+    wandb.define_metric("global_step")
+    wandb.define_metric("*", step_metric="global_step")
 
 
 def print_header(title: str) -> None:

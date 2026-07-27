@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Configurable instability prevention**: opt-in via `prevent_instability` gym config flag. When enabled, post-RK4 sanity checks on the standardized state revert blow-ups and truncate the episode; cumulative event count is logged to wandb under `instability/total` via a new `InstabilityCountCallback`, with end-of-run per-env breakdown printed to stdout. Detection bounds are exposed as `instability_yaw_rate_bound` and `instability_slip_bound`.
 
 ### Changed
+- **`ObsMinMaxSnapshotCallback` logs via SB3 logger**: bounds-violation metrics now go through `self.logger.record` + `dump` instead of direct `wandb.log`, aligning steps with PPO's own writes.
 - **Per-step Frenet projection cache**: `cartesian_to_frenet` was called 2–3× per env step from independent sites (observation, boundary check, recovery success, reward, done). Now projected once per agent in `GKEnv._update_frenet_cache` immediately after `sim.step`, and all consumers read `(s, ey, ephi)` from `self._frenet_cache`. Measured **~20% end-to-end speedup** (3.03 → 2.44 ms/step) with `observation.observe` cost halved (647 → 325 µs) on the drift training config. Behaviour preserved — cached values are identical to the previous independent recomputations.
 
 ## [1.2.0] - 2026-04-11

@@ -47,7 +47,7 @@ def _plot_dataset_overview(dataset: Dataset, npz_path: str, out_path: str, mirro
     cmd_speed = data["cmd_speed"]
     cmd_steer = data["cmd_steer"]
     rs_core_speed = data["rs_core_speed"]
-    omega_full = rs_core_speed / SYSID_PARAMS["R_w"]
+    omega_full = rs_core_speed / SYSID_PARAMS["R_w"]  # ω = v / r
 
     if mirror:
         # Reflect raw bag signals so they match the mirrored windows we're about to overlay.
