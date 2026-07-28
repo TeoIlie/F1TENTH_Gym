@@ -1346,6 +1346,26 @@ class GKEnv(gym.Env):
         if self.renderer is not None:
             self.renderer.add_renderer_callback(callback_func)
 
+    def save_frame(self, path: str | None = None, scale: int | None = None) -> str:
+        """Save the currently rendered frame to an image file.
+
+        Also bound to the ``P`` key while a render window is open.
+
+        Args:
+            path: Output file path. Defaults to a timestamped png under ``figures/frames/``.
+            scale: Resolution multiplier over the window size. Defaults to the
+                ``screenshot_scale`` render config field (pyqt6 renderer only).
+
+        Returns:
+            Path of the written file.
+
+        Raises:
+            RuntimeError: If the environment was created without a ``render_mode``.
+        """
+        if self.renderer is None:
+            raise RuntimeError("Cannot save a frame: the environment was created without a render_mode.")
+        return self.renderer.save_frame(path=path, scale=scale)
+
     def render(self, mode="human"):
         """Render the environment.
 

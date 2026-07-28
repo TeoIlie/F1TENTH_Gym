@@ -18,7 +18,7 @@ from .objects import (
 from .renderer import EnvRenderer, RenderSpec
 
 # one-line instructions visualized at the top of the screen (if show_info=True)
-INSTRUCTION_TEXT = "Mouse click (L/M/R): Change POV - 'S' key: On/Off"
+INSTRUCTION_TEXT = "Mouse (L/M/R): Change POV - 'S': render on/off - 'P': save frame"
 
 
 class PygameEnvRenderer(EnvRenderer):
@@ -241,6 +241,7 @@ class PygameEnvRenderer(EnvRenderer):
             - Right mouse button: follow previous agent
             - Middle mouse button: change to map view
             - S key: enable/disable rendering
+            - P key: save the current frame to an image file
         """
         for event in pygame.event.get():
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -276,6 +277,45 @@ class PygameEnvRenderer(EnvRenderer):
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_s:
                 logging.debug("Pressed S key -> Enable/disable rendering")
                 self.draw_flag = not (self.draw_flag)
+
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_p:
+                logging.debug("Pressed P key -> Save frame")
+                try:
+                    self.save_frame()
+                except Exception as ex:
+                    # a failed save must not interrupt the simulation loop
+                    logging.error(f"Failed to save frame: {ex}")
+
+    def save_frame(self, path: Optional[str] = None, scale: Optional[int] = None) -> str:
+        """
+        Save the current frame to an image file.
+
+        Pygame draws into a fixed-size surface, so the frame is written at the window
+        resolution and `scale` is ignored. It is accepted only for API parity with the
+        PyQt renderer, which can supersample. For a higher-resolution capture, either
+        raise ``window_size`` or switch ``render_type`` to "pyqt6".
+
+        Parameters
+        ----------
+        path : str, optional
+            output file path. By default a timestamped png under ``figures/frames/``.
+        scale : int, optional
+            ignored by this renderer, see above
+
+        Returns
+        -------
+        str
+            path of the written file
+        """
+        if scale is not None and scale != 1:
+            logging.warning("The pygame renderer cannot supersample; saving the frame at window resolution instead.")
+
+        out_path = self.resolve_frame_path(path)
+        surface = self.window if self.window is not None else self.canvas
+        pygame.image.save(surface, str(out_path))
+
+        print(f"Saved {surface.get_width()}x{surface.get_height()} frame to {out_path.resolve()}")
+        return str(out_path)
 
     def render_points(
         self,

@@ -7,6 +7,7 @@ show_info: True       # [bool] it toggles the visualization of the instruction t
 show_ctr_debug: True # [bool] it toggles the control debug panel at the bottom of the window
 show_obs_debug: True  # [bool] it toggles the observation debug overlay on top of the map
 render_type: "pyqt6"  # [str] rendering type. Options: "pygame", "pyqt6"
+screenshot_scale: 4   # [int] resolution multiplier over window_size for frames saved with the 'P' key (pyqt6 only)
 vehicle_palette:      # [list] cyclic list of colors for the vehicles
   - "#984ea3"
   - "#e41a1c"

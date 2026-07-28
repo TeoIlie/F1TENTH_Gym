@@ -194,9 +194,12 @@ st_acados_ocp.json
 
 mpc-ref/
 
-# Analysis and test figures 
+# Analysis and test figures
 figures/analysis/
 figures/tests/
+
+# Frames saved from the renderer with the 'P' key
+figures/frames/
 
 # ROS2 bags for analysis
 examples/analysis/bags

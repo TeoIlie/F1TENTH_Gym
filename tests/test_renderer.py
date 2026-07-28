@@ -1,7 +1,10 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 
 from gymkhana.envs import GKEnv
 from gymkhana.envs.rendering.renderer import RenderSpec
@@ -425,6 +428,39 @@ class TestRenderer(unittest.TestCase):
         spec = env.unwrapped.render_spec
         self.assertFalse(spec.show_wheels)
         self.assertEqual(spec.window_size, 800)
+        env.close()
+
+    def test_save_frame(self):
+        """save_frame supersamples by screenshot_scale, honours an explicit scale, and never overwrites."""
+        size = 200
+        env = self._make_env(
+            config={"render_config": {"window_size": size, "screenshot_scale": 3}},
+            render_mode="rgb_array",
+        )
+        env.reset()
+        env.step(env.action_space.sample())
+        env.render()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "frame.png")
+            first = env.unwrapped.save_frame(target)
+            second = env.unwrapped.save_frame(target, scale=1)
+
+            with Image.open(first) as image:
+                # width is exactly the scaled window; height also covers the debug panel when enabled
+                self.assertEqual(image.size[0], size * 3, "frame width is not the scaled window width")
+                self.assertGreaterEqual(image.size[1], size * 3, "frame height is smaller than the scaled window")
+            with Image.open(second) as image:
+                self.assertEqual(image.size[0], size, "explicit scale argument was ignored")
+            self.assertNotEqual(first, second, "the second frame overwrote the first")
+
+        env.close()
+
+        # an env without a renderer fails loudly rather than with an AttributeError on None
+        env = self._make_env()
+        env.reset()
+        with self.assertRaises(RuntimeError):
+            env.unwrapped.save_frame()
         env.close()
 
     def test_obs_debug_disabled(self):

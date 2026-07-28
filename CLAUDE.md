@@ -207,6 +207,20 @@ config = {
 
 Debug with breakpoints by looping through environment steps (see `tests/drift_debug.py`).
 
+### Saving Frames
+
+Press `P` in a render window to save the current frame under `figures/frames/` (gitignored), or call
+`env.unwrapped.save_frame(path=None, scale=None)` from a script. The pyqt6 renderer re-renders the window
+at `screenshot_scale` times its on-screen size (`rendering.yaml`, default 4 → a 3200x3760 png from the
+default 800px window), so text and vector shapes stay sharp. The pygame renderer can only save at window
+resolution; raise `window_size` there instead.
+
+```python
+config = {
+    'render_config': {'screenshot_scale': 8, 'show_ctr_debug': False, 'show_info': False},
+}
+```
+
 ## Branches and Fork History
 
 - Original `f1tenth_gym` branch `main` → renamed to `f1tenth_main_original` in this fork

@@ -17,7 +17,7 @@ from .pyqt_objects import (
 from .renderer import EnvRenderer, RenderSpec
 
 # one-line instructions visualized at the top of the screen (if show_info=True)
-INSTRUCTION_TEXT = "Mouse click (L/M/R): Change POV - 'S' key: On/Off"
+INSTRUCTION_TEXT = "Mouse (L/M/R): Change POV - 'S': render on/off - 'P': save frame"
 
 # control debug panel constants
 _DEBUG_PANEL_HEIGHT = 140
@@ -482,6 +482,63 @@ class PyQtEnvRenderer(EnvRenderer):
             logging.debug("Pressed S key -> Enable/disable rendering")
             self.draw_flag = not self.draw_flag
             self.draw_flag_changed = True
+        elif event.key() == QtCore.Qt.Key.Key_P:
+            logging.debug("Pressed P key -> Save frame")
+            try:
+                self.save_frame()
+            except Exception as ex:
+                # an unhandled exception in a Qt event handler aborts the process,
+                # so a failed save must never escape the key handler
+                logging.error(f"Failed to save frame: {ex}")
+
+    def save_frame(self, path: Optional[str] = None, scale: Optional[int] = None) -> str:
+        """
+        Save the current window as a high-resolution image.
+
+        The window is re-rendered into an image with a device pixel ratio of `scale`, so vector
+        content (car, track lines, text) is drawn at full resolution rather than upscaled. The
+        capture covers the whole window, including the control debug panel and observation
+        overlay when enabled.
+
+        Parameters
+        ----------
+        path : str, optional
+            output file path. By default a timestamped png under ``figures/frames/``.
+        scale : int, optional
+            resolution multiplier over the on-screen window size. By default the
+            ``screenshot_scale`` field of the rendering spec.
+
+        Returns
+        -------
+        str
+            path of the written file
+
+        Raises
+        ------
+        RuntimeError
+            if the image cannot be allocated or written
+        """
+        scale = int(scale if scale is not None else self.render_spec.screenshot_scale)
+        out_path = self.resolve_frame_path(path)
+
+        width, height = self.window.width() * scale, self.window.height() * scale
+        image = QtGui.QImage(width, height, QtGui.QImage.Format.Format_ARGB32)
+        if image.isNull():
+            raise RuntimeError(f"Could not allocate a {width}x{height} image, try a smaller screenshot_scale")
+        image.setDevicePixelRatio(scale)
+        image.fill(QtCore.Qt.GlobalColor.white)
+
+        painter = QtGui.QPainter(image)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+        self.window.render(painter)
+        painter.end()
+
+        if not image.save(str(out_path)):
+            raise RuntimeError(f"Could not write frame to {out_path}")
+
+        print(f"Saved {width}x{height} frame to {out_path.resolve()}")
+        return str(out_path)
 
     def mouse_clicked(self, event: QtGui.QMouseEvent) -> None:
         """

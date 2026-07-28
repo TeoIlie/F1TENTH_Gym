@@ -8,6 +8,9 @@ from typing import Any, Optional
 import numpy as np
 import yaml
 
+# default output directory for frames saved via EnvRenderer.save_frame(), relative to the cwd
+SCREENSHOT_DIR = pathlib.Path("figures") / "frames"
+
 
 @dataclass
 class RenderSpec:
@@ -21,6 +24,7 @@ class RenderSpec:
     show_obs_debug: Optional[bool] = False
     vehicle_palette: Optional[list[str]] = None
     render_type: Optional[str] = "pygame"
+    screenshot_scale: Optional[int] = 4
 
     def __init__(
         self,
@@ -34,6 +38,7 @@ class RenderSpec:
         show_obs_debug: bool = False,
         vehicle_palette: list[str] = None,
         render_type: str = "pygame",
+        screenshot_scale: int = 4,
     ) -> None:
         """
         Initialize rendering specification.
@@ -54,6 +59,9 @@ class RenderSpec:
             toggle rendering of text instructions, by default True
         vehicle_palette : list, optional
             list of colors for rendering vehicles according to their id, by default None
+        screenshot_scale : int, optional
+            resolution multiplier over the window size for frames saved via
+            :meth:`EnvRenderer.save_frame`, by default 4
         """
         self.window_size = window_size
         self.focus_on = focus_on
@@ -65,6 +73,7 @@ class RenderSpec:
         self.show_obs_debug = show_obs_debug
         self.vehicle_palette = vehicle_palette or ["#984ea3"]
         self.render_type = render_type
+        self.screenshot_scale = screenshot_scale
 
     @staticmethod
     def from_yaml(yaml_file: str | pathlib.Path, overrides: Optional[dict] = None):
@@ -186,6 +195,59 @@ class EnvRenderer(ABC):
             text anchor point ('center', 'left', 'right'), by default 'center'
         """
         raise NotImplementedError()
+
+    def save_frame(self, path: Optional[str] = None, scale: Optional[int] = None) -> str:
+        """
+        Save the currently rendered frame to an image file.
+
+        Parameters
+        ----------
+        path : str, optional
+            output file path. By default a timestamped png under ``figures/frames/``.
+        scale : int, optional
+            resolution multiplier over the on-screen window size. By default the
+            ``screenshot_scale`` field of the rendering spec.
+
+        Returns
+        -------
+        str
+            path of the written file
+        """
+        raise NotImplementedError()
+
+    def resolve_frame_path(self, path: Optional[str] = None) -> pathlib.Path:
+        """
+        Build the output path for :meth:`save_frame`, creating parent directories.
+
+        A default name is derived from the current sim time. Existing files are never
+        overwritten: a ``-1``, ``-2``, ... suffix is appended on collision, so frames
+        captured at the same sim time (e.g. across episode resets) do not clobber each other.
+
+        Parameters
+        ----------
+        path : str, optional
+            requested output path, or None to use the default location and name
+
+        Returns
+        -------
+        pathlib.Path
+            a path that does not yet exist, with its parent directory created
+        """
+        if path is not None:
+            out_path = pathlib.Path(path)
+        else:
+            # sim_time is None until the first update() call
+            sim_time = getattr(self, "sim_time", None) or 0.0
+            out_path = SCREENSHOT_DIR / f"frame_t{sim_time:07.2f}s.png"
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        stem, suffix, index = out_path.stem, out_path.suffix, 1
+        while out_path.exists():
+            out_path = out_path.with_name(f"{stem}-{index}{suffix}")
+            index += 1
+
+        return out_path
 
     @abstractmethod
     def close(self):
