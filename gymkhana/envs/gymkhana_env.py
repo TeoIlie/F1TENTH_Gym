@@ -561,6 +561,20 @@ class GKEnv(gym.Env):
         return load_params("f1tenth_std")
 
     @classmethod
+    def f1tenth_std_new_tire_covers_params(cls) -> dict:
+        """Return STD-model parameters for the 1/10th scale F1TENTH car fitted with
+        new slippery 3D-printed tire covers.
+
+        Same structure as :meth:`f1tenth_std_vehicle_params` but with re-fitted
+        PAC2002 tyre coefficients (lower friction peaks) from a fresh sysid run.
+        See ``gymkhana/envs/params/f1tenth_std_new_tire_covers.yaml``.
+
+        Returns:
+            Complete parameter dictionary for the STD model with new tire covers.
+        """
+        return load_params("f1tenth_std_new_tire_covers")
+
+    @classmethod
     def f1tenth_stp_vehicle_params(cls) -> dict:
         """Return default parameters for the 1/10th scale F1TENTH car (STP model).
 

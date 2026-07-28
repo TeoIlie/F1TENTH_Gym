@@ -11,11 +11,11 @@ from optuna.distributions import FloatDistribution
 
 from examples.analysis.sysid.env import SYSID_PARAMS
 from examples.analysis.sysid.search_spaces import (
-    STAGE1,
-    STAGE2,
+    FINE_TUNE,
     STAGE_SPACES,
     STEER_LAG,
     SYMMETRIC_PAIRS,
+    VEHICLE_DYN,
     apply_trial_params,
 )
 from examples.analysis.sysid.sensitivity import FROZEN_PARAMS
@@ -28,7 +28,7 @@ def test_search_keys_exist_in_sysid_params():
 
 
 def test_stages_disjoint():
-    assert set(STAGE1) & set(STAGE2) == set()
+    assert set(VEHICLE_DYN) & set(FINE_TUNE) == set()
 
 
 def test_stages_disjoint_with_frozen():
@@ -60,7 +60,7 @@ def test_apply_trial_params_non_mutating():
 
 def test_apply_trial_params_overlays_full_dict():
     base = dict(SYSID_PARAMS)
-    trial = {name: 0.5 for name in (*STAGE1, *STEER_LAG)}
+    trial = {name: 0.5 for name in (*VEHICLE_DYN, *STEER_LAG)}
     out = apply_trial_params(base, trial)
     # All non-search-space keys preserved, except symmetric partners which mirror their pair.
     for k, v in SYSID_PARAMS.items():

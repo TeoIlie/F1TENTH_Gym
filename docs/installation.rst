@@ -31,6 +31,15 @@ Using poetry
    poetry install
    source $(poetry env info -p)/bin/activate  # or prefix commands with `poetry run`
 
+Pre-commit hooks
+----------------
+
+``poetry install`` provides ``pre-commit``, but the git hook is wired up once per clone with ``pre-commit install``. After that, ruff runs on staged files at every commit. Run ``pre-commit run --all-files`` to check the whole repo.
+
+.. code:: bash
+
+   pre-commit install
+
 .. _additional-dependencies:
 
 Additional dependencies

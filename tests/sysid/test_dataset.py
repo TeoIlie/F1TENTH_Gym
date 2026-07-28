@@ -8,6 +8,7 @@ fast and have known ground truth.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,6 +16,8 @@ from scipy.signal import savgol_filter
 
 from examples.analysis.sysid.dataset import (
     load_dataset,
+    load_dataset_tagged,
+    load_datasets,
     mirror_window,
 )
 from examples.analysis.sysid.env import SYSID_PARAMS
@@ -324,3 +327,87 @@ def test_window_is_frozen(straight_npz):
 def test_dataset_dt_set(straight_npz):
     ds = load_dataset(straight_npz, mirror=False, dt=0.01)
     assert ds.dt == 0.01
+
+
+# -- source_bag tagging + multi-bag aggregation --
+
+
+def test_load_dataset_default_source_bag_empty(straight_npz):
+    """load_dataset leaves source_bag empty so existing single-bag callers
+    (sensitivity.py, study.py single-bag mode) are unaffected.
+    """
+    ds = load_dataset(straight_npz, mirror=False)
+    assert all(w.source_bag == "" for w in ds.windows)
+
+
+def test_load_dataset_tagged_stamps_resolved_path(straight_npz):
+    ds = load_dataset_tagged(straight_npz, mirror=False)
+    expected = str(Path(straight_npz).resolve())
+    assert all(w.source_bag == expected for w in ds.windows)
+
+
+def test_mirror_window_propagates_source_bag(asymmetric_npz):
+    ds = load_dataset_tagged(asymmetric_npz, mirror=False)
+    w = ds.windows[0]
+    m = mirror_window(w)
+    assert m.source_bag == w.source_bag
+
+
+@pytest.fixture
+def two_bags(tmp_path):
+    a = tmp_path / "a.npz"
+    b = tmp_path / "b.npz"
+    _make_npz(str(a), speed=1.0)
+    _make_npz(str(b), speed=1.5)
+    return str(a), str(b)
+
+
+def test_load_datasets_concat_windows(two_bags):
+    a, b = two_bags
+    da = load_dataset(a, mirror=False)
+    db = load_dataset(b, mirror=False)
+    combined = load_datasets([a, b], mirror=False)
+    assert len(combined.windows) == len(da.windows) + len(db.windows)
+    assert combined.n_candidates == da.n_candidates + db.n_candidates
+    assert combined.n_dropped_low_speed == da.n_dropped_low_speed + db.n_dropped_low_speed
+    assert combined.n_dropped_nonfinite == da.n_dropped_nonfinite + db.n_dropped_nonfinite
+    assert combined.dt == da.dt
+
+
+def test_load_datasets_tags_source_bag(two_bags):
+    a, b = two_bags
+    combined = load_datasets([a, b], mirror=False)
+    a_res = str(Path(a).resolve())
+    b_res = str(Path(b).resolve())
+    sources = {w.source_bag for w in combined.windows}
+    assert sources == {a_res, b_res}
+
+
+def test_load_datasets_sorts_inputs_deterministic(two_bags):
+    """CLI order must not affect window order — sort by resolved path internally."""
+    a, b = two_bags
+    forward = load_datasets([a, b], mirror=False)
+    reverse = load_datasets([b, a], mirror=False)
+    assert [w.source_bag for w in forward.windows] == [w.source_bag for w in reverse.windows]
+    assert [w.t0_idx for w in forward.windows] == [w.t0_idx for w in reverse.windows]
+
+
+def test_load_datasets_deduplicates(two_bags):
+    """Passing the same path twice loads it once (sorted dedup via set)."""
+    a, _ = two_bags
+    single = load_datasets([a], mirror=False)
+    doubled = load_datasets([a, a], mirror=False)
+    assert len(single.windows) == len(doubled.windows)
+
+
+def test_load_datasets_empty_raises():
+    with pytest.raises(ValueError, match="at least one"):
+        load_datasets([], mirror=False)
+
+
+def test_load_datasets_mirror_passthrough(two_bags):
+    """`mirror=True` kwarg forwards into each load_dataset call."""
+    a, b = two_bags
+    no_mirror = load_datasets([a, b], mirror=False)
+    with_mirror = load_datasets([a, b], mirror=True)
+    assert len(with_mirror.windows) == 2 * len(no_mirror.windows)

@@ -1,7 +1,7 @@
 """Optuna search-space definitions for STD system identification (Phase 3).
 
-Stage-1 / Stage-2 distributions and the param-overlay helper. Bounds are
-locked by the Phase-2 sensitivity analysis — see
+Stage distributions (steer_lag, vehicle_dyn, fine_tune) and the param-overlay
+helper. Bounds are locked by the Phase-2 sensitivity analysis — see
 docs/plan/OPTUNA_SYS_ID_SENSITIVITY_REPORT.md §6 for justifications, and
 docs/plan/OPTUNA_SYS_ID.md for the overall design.
 """
@@ -25,9 +25,6 @@ VEHICLE_DYN: dict[str, BaseDistribution] = {
     "I_y_w": FloatDistribution(low=0.0001, high=0.005),  # nominal 0.0017
     "h_s": FloatDistribution(low=0.02, high=0.09),  # nominal 0.074
     "R_w": FloatDistribution(low=0.04, high=0.06),  # nominal 0.049
-}
-
-STAGE1: dict[str, BaseDistribution] = {
     "a_max": FloatDistribution(low=5.0, high=8.0),  # nominal 6.0
     "tire_p_dx1": FloatDistribution(low=0.1, high=1.5),  # nominal 1.1739
     "tire_p_kx1": FloatDistribution(low=5.0, high=30.0),  # nominal 22.303
@@ -35,23 +32,17 @@ STAGE1: dict[str, BaseDistribution] = {
     "tire_p_ky1": FloatDistribution(low=-30.0, high=-5.0),  # nominal -21.92
 }
 
-STAGE2: dict[str, BaseDistribution] = {
+FINE_TUNE: dict[str, BaseDistribution] = {
     "tire_p_cx1": FloatDistribution(low=1.0, high=1.8),  # nominal 1.6411
     "tire_p_ex1": FloatDistribution(low=-2.1, high=0.99),  # nominal 0.46403
     "tire_p_cy1": FloatDistribution(low=1.0, high=1.8),  # nominal 1.3507
     "tire_p_ey1": FloatDistribution(low=-2.1, high=0.99),  # nominal -0.0074722
-}
-
-STAGE3: dict[str, BaseDistribution] = {
     # longitudinal combined - Fx reduction due to lateral slip α
     "tire_r_bx1": FloatDistribution(low=5.0, high=25.0),  # nominal 13.276
     "tire_r_bx2": FloatDistribution(low=-25.0, high=-5.0),  # nominal -13.778
     # lateral combined - Fy reduction due to longitudinal slip κ
     "tire_r_by1": FloatDistribution(low=3.0, high=15.0),  # nominal 7.1433
     "tire_r_by2": FloatDistribution(low=3.0, high=18.0),  # nominal 9.1916
-}
-
-FINE_TUNE: dict[str, BaseDistribution] = {
     # combined-slip shape & curvature
     "tire_r_cx1": FloatDistribution(low=0.8, high=2.0),  # nominal 1.2568
     "tire_r_ex1": FloatDistribution(low=-1.0, high=0.99),  # nominal 0.65225
@@ -70,9 +61,6 @@ FINE_TUNE: dict[str, BaseDistribution] = {
 STAGE_SPACES: dict[str, dict[str, BaseDistribution]] = {
     "steer_lag": STEER_LAG,
     "vehicle_dyn": VEHICLE_DYN,
-    "stage1": STAGE1,
-    "stage2": STAGE2,
-    "stage3": STAGE3,
     "fine_tune": FINE_TUNE,
 }
 
