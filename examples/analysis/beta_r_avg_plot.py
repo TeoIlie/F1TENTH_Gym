@@ -15,6 +15,9 @@ Usage — Stanley baseline (must run first to generate baseline .npz):
 Usage — Learned (PPO) controller:
     python examples/analysis/beta_r_avg_plot.py --controller_type learned --learned_type recover --run_id <wandb_run_id>
 
+Add --no-title to omit the figure title (useful when embedding in LaTeX, where the
+caption carries the description).
+
 Output saved to figures/analysis/recover_heatmap/<controller_type or run_id>/
 """
 
@@ -25,6 +28,7 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 
+from examples.analysis.fig_format import CMAP, latex_style
 from examples.controllers import create_controller
 from train.config.env_config import get_env_id
 from train.train_utils import get_output_dirs, print_header
@@ -49,9 +53,21 @@ from train.train_utils import get_output_dirs, print_header
 
 CONTROLLER_TYPE = "learned"
 
-LEARNED_TYPE = "drift"
-RUN_ID = "gs9xfxhy"
-DESC = "drift model - new ID'd params, 'speed' not 'accl' control, drift_real obs space, log_std fix applied"
+LEARNED_TYPE = "transfer"
+RUN_ID = "29hhclk1"
+DESC = "transfer model - tgkpbyrh retrained"
+
+# LEARNED_TYPE = "drift"
+# RUN_ID = "tgkpbyrh"
+# DESC = "drift model - same changes as 6nyece2v, new params for new covers (f1tenth_std_new_tire_covers_params)"
+
+# LEARNED_TYPE = "drift"
+# RUN_ID = "vn7fzj2u"
+# DESC = "drift model - same changes as 3g2kzk8l, but more DR pertubration (0.1 not 0.02) on all params"
+
+# LEARNED_TYPE = "drift"
+# RUN_ID = "gs9xfxhy"
+# DESC = "drift model - new ID'd params, 'speed' not 'accl' control, drift_real obs space, log_std fix applied"
 
 # LEARNED_TYPE = "drift"
 # RUN_ID = "wx0w5eqr"
@@ -299,63 +315,96 @@ def run_grid_evaluation(eval_env, controller, stanley_states=None):
     )
 
 
-def plot_recovery_heatmap(beta_values, r_values, recovery_rates, output_path, controller_label=""):
-    """Plot a heatmap of recovery success rate across the (beta, r) grid."""
-    fig, ax = plt.subplots(figsize=(10, 8))
+# Luminance below which white text out-contrasts black, from equating the two WCAG
+# contrast ratios: 1.05 / (L + 0.05) = (L + 0.05) / 0.05  =>  L = sqrt(0.0525) - 0.05.
+_WHITE_TEXT_MAX_LUMINANCE = 0.0525**0.5 - 0.05
 
-    beta_deg = np.rad2deg(beta_values)
-    r_deg = np.rad2deg(r_values)
-    pct = recovery_rates * 100
 
-    im = ax.imshow(
-        pct.T,
-        origin="lower",
-        aspect="auto",
-        cmap="magma",
-        vmin=0,
-        vmax=100,
-        interpolation="bilinear",
-    )
+def contrasting_text_color(rgba):
+    """Return "white" or "black", whichever contrasts more against the given color.
 
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label("Recovery Rate (%)", fontsize=12, fontweight="bold")
+    Keys off WCAG relative luminance rather than a raw data threshold, so the
+    choice stays correct for any colormap.
+    """
 
-    # Annotate cells at integer positions (aligned with imshow pixels)
-    for i in range(len(beta_deg)):
-        for j in range(len(r_deg)):
-            val = pct[i, j]
-            color = "white" if val < 40 or val > 80 else "black"
-            ax.text(
-                i,
-                j,
-                f"{val:.0f}%",
-                ha="center",
-                va="center",
-                fontsize=7,
-                fontweight="bold",
-                color=color,
+    def linearize(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linearize(c) for c in rgba[:3])
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "white" if luminance <= _WHITE_TEXT_MAX_LUMINANCE else "black"
+
+
+def plot_recovery_heatmap(beta_values, r_values, recovery_rates, output_path, controller_label="", show_title=True):
+    """Plot a heatmap of recovery success rate across the (beta, r) grid.
+
+    Args:
+        beta_values: Sideslip angles in radians, one per grid column.
+        r_values: Yaw rates in rad/s, one per grid row.
+        recovery_rates: (len(beta_values), len(r_values)) array of rates in [0, 1].
+        output_path: File path to write the figure to.
+        controller_label: Controller name shown in the title.
+        show_title: When False, the title is omitted entirely (for LaTeX figures
+            where the caption carries the description).
+    """
+    with latex_style():
+        _, ax = plt.subplots(figsize=(10, 8))
+
+        beta_deg = np.rad2deg(beta_values)
+        r_deg = np.rad2deg(r_values)
+        pct = recovery_rates * 100
+
+        im = ax.imshow(
+            pct.T,
+            origin="lower",
+            aspect="auto",
+            cmap=CMAP,
+            vmin=0,
+            vmax=100,
+            interpolation="bilinear",
+        )
+
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label("Recovery rate [%]")
+
+        # Annotate cells at integer positions (aligned with imshow pixels). Bilinear
+        # interpolation is exact at those positions, so the mapped cell value is the
+        # background color actually under the label.
+        for i in range(len(beta_deg)):
+            for j in range(len(r_deg)):
+                val = pct[i, j]
+                color = contrasting_text_color(im.cmap(im.norm(val)))
+                ax.text(
+                    i,
+                    j,
+                    f"{val:.0f}%",
+                    ha="center",
+                    va="center",
+                    family="sans-serif",  # set off from the serif body text
+                    fontweight="bold",
+                    fontsize=11,
+                    color=color,
+                )
+
+        # Use degree tick labels on integer positions
+        ax.set_xticks(range(len(beta_deg)))
+        ax.set_xticklabels([f"{v:.0f}" for v in beta_deg])
+        ax.set_yticks(range(len(r_deg)))
+        ax.set_yticklabels([f"{v:.0f}" for v in r_deg])
+
+        ax.set_xlabel(r"Sideslip angle $\beta$ [deg]")
+        ax.set_ylabel(r"Yaw rate $r$ [deg/s]")
+        if show_title:
+            ax.set_title(
+                f"Recovery Success Rate: {controller_label}\n"
+                rf"Averaged over $v=[{V_VALUES[0]:.0f}, {V_VALUES[-1]:.0f}]$ m/s, "
+                rf"$\psi=[{np.rad2deg(YAW_VALUES[0]):.0f}, {np.rad2deg(YAW_VALUES[-1]):.0f}]$ deg"
             )
 
-    # Use degree tick labels on integer positions
-    ax.set_xticks(range(len(beta_deg)))
-    ax.set_xticklabels([f"{v:.0f}" for v in beta_deg])
-    ax.set_yticks(range(len(r_deg)))
-    ax.set_yticklabels([f"{v:.0f}" for v in r_deg])
-
-    ax.set_xlabel("Beta (sideslip angle) [deg]", fontsize=13, fontweight="bold")
-    ax.set_ylabel("R (yaw rate) [deg/s]", fontsize=13, fontweight="bold")
-    ax.set_title(
-        f"Recovery Success Rate — {controller_label}\n"
-        f"Averaged over v=[{V_VALUES[0]:.0f}..{V_VALUES[-1]:.0f}] m/s, "
-        f"yaw=[{np.rad2deg(YAW_VALUES[0]):.0f}..{np.rad2deg(YAW_VALUES[-1]):.0f}] deg",
-        fontsize=14,
-        fontweight="bold",
-    )
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    print(f"\nHeatmap saved to: {output_path}")
-    plt.show()
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        print(f"\nHeatmap saved to: {output_path}")
+        plt.show()
 
 
 def save_metrics(title, summary_lines, recovery_times, output_path, desc=""):
@@ -449,6 +498,11 @@ def parse_args():
     parser.add_argument("--run_id", default=RUN_ID, help="Wandb run ID for the learned model")
     parser.add_argument("--desc", default=DESC, help="Short description of the model")
     parser.add_argument("--no-cache", action="store_true", help="Ignore existing cache and re-run grid evaluation")
+    parser.add_argument(
+        "--no-title",
+        action="store_true",
+        help="Omit the figure title (for LaTeX figures where the caption describes it)",
+    )
     return parser.parse_args()
 
 
@@ -574,7 +628,14 @@ def main():
         f"{subfolder}/beta_r_recovery_heatmap_{controller_type}{'_' + learned_type if learned_type else ''}_policy.pdf"
     )
     controller_label = f"{controller_type}" + (f" ({learned_type})" if learned_type else "")
-    plot_recovery_heatmap(BETA_VALUES, R_VALUES, recovery_rates, output_path, controller_label=controller_label)
+    plot_recovery_heatmap(
+        BETA_VALUES,
+        R_VALUES,
+        recovery_rates,
+        output_path,
+        controller_label=controller_label,
+        show_title=not args.no_title,
+    )
 
     n_inner = len(V_VALUES) * len(YAW_VALUES)
     overall_rate = np.mean(recovery_rates) * 100
