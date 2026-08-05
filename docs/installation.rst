@@ -71,6 +71,11 @@ Install the ``acados_template`` Python interface inside your virtual environment
 
    pip install -e ~/software/acados/interfaces/acados_template
 
+.. warning::
+
+   If this fails with ``ModuleNotFoundError: No module named 'vcs_versioning'``, see
+   :ref:`acados-vcs-versioning` in Known Issues.
+
 .. tip::
 
    **VSCode debugging**: If your IDE reports ``ModuleNotFoundError`` for ``acados_template`` or ``casadi`` when debugging, ensure that:
