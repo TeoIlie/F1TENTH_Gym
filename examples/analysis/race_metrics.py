@@ -44,8 +44,9 @@ MAP = "Drift"
 N_LAPS = 10
 SEED = 42
 
-# Speed the car is launched at on every reset. Starting from rest makes the car crawl through
-# the first corner, so launch it at the controller's target speed instead.
+# Speed the car is launched at on every reset. A standing start leaves the tire model at near-zero
+# slip velocity, where steering produces almost no yaw, so the car ploughs straight off the track.
+# Launching rolling avoids that. Only affects the out-lap, which is never timed.
 INIT_SPEED = TARGET_SPEED
 
 # Give up rather than loop forever if the controller cannot string laps together.
@@ -184,7 +185,7 @@ def parse_args():
         "--controller_type", default=CONTROLLER_TYPE, help="Controller type: 'learned', 'stanley', 'steer', 'stmpc'"
     )
     parser.add_argument("--run_id", default=RUN_ID, help="Wandb run ID for the learned model")
-    parser.add_argument("--desc", default=DESC, help="Short description of the model")
+    parser.add_argument("--desc", default=None, help="Short description of the model")
     parser.add_argument("--laps", type=int, default=N_LAPS, help="Number of laps to time")
     parser.add_argument("--map", default=MAP, help="Map name")
     parser.add_argument("--render", action="store_true", help="Open a render window to watch the run")
@@ -197,9 +198,16 @@ def main():
     run_id = args.run_id
     map_name = args.map
 
+    if args.laps < 1:
+        raise SystemExit("--laps must be at least 1")
+    if controller_type == "learned" and not run_id:
+        raise SystemExit("--run_id is required for the learned controller")
+
+    desc = args.desc if args.desc is not None else (DESC if controller_type == CONTROLLER_TYPE else controller_type)
+
     print_header("Racing Lap-Time Metrics")
     print(f"Controller: {controller_type}, Run ID: {run_id}, Map: {map_name}, Laps: {args.laps}")
-    print(f"Description: {args.desc}")
+    print(f"Description: {desc}")
 
     proj_root, _ = get_output_dirs()
 
@@ -223,7 +231,7 @@ def main():
         os.path.join(subfolder, "metrics.txt"),
         controller_label=controller_type + (f" ({run_id})" if controller_type == "learned" else ""),
         map_name=map_name,
-        desc=args.desc,
+        desc=desc,
     )
 
     print("\nDone!")
