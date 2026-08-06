@@ -269,6 +269,8 @@ class GKEnv(gym.Env):
         self.render_lookahead_curvatures = self.config["render_lookahead_curvatures"]
         self.lookahead_n_points = self.config["lookahead_n_points"]
         self.lookahead_ds = self.config["lookahead_ds"]
+        self.raceline_vx_n_points = self.config["raceline_vx_n_points"]
+        self.raceline_vx_ds = self.config["raceline_vx_ds"]
         self.sparse_width_obs = self.config["sparse_width_obs"]
         self.debug_frenet_projection = self.config["debug_frenet_projection"]
         self.record_obs_min_max = self.config["record_obs_min_max"]
@@ -312,6 +314,12 @@ class GKEnv(gym.Env):
 
         if self.lookahead_n_points < 2:
             raise ValueError("Minimum of 2 lookahead track observation points required")
+
+        if self.raceline_vx_n_points < 1:
+            raise ValueError("Minimum of 1 raceline velocity observation point required")
+
+        if self.raceline_vx_ds <= 0:
+            raise ValueError("raceline_vx_ds must be positive")
 
         # radius to consider done
         self.start_thresh = 0.5  # 10cm
@@ -401,7 +409,7 @@ class GKEnv(gym.Env):
         normalize_obs = self.config["normalize_obs"]
 
         # Identify whether the chosen observation type is supported for normalization
-        supported_obs_types = ["drift", "drift_real", "race", "frenet", "drift_st"]
+        supported_obs_types = ["drift", "drift_real", "drift_real_vref", "race", "frenet", "drift_st"]
         obs_norm_supported = obs_type in supported_obs_types
 
         if normalize_obs is None:
@@ -640,6 +648,8 @@ class GKEnv(gym.Env):
             "render_lookahead_curvatures": False,
             "lookahead_n_points": 10,
             "lookahead_ds": 0.3,
+            "raceline_vx_n_points": 15,
+            "raceline_vx_ds": 0.4,
             "sparse_width_obs": False,
             "debug_frenet_projection": False,
             "normalize_obs": None,  # None = auto-set based on observation type

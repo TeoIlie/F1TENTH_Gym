@@ -186,6 +186,19 @@ config = {
 }
 ```
 
+The `drift_real_vref` observation type appends `raceline_vxs` — the raceline's precomputed
+velocity profile (`vx_mps` in `<map>_raceline.csv`) sampled ahead of the car in m/s, starting at
+the car's own arc length. It is indexed along the raceline, so it requires
+`frenet_reference: 'raceline'` and a map that ships a raceline.
+
+```python
+config = {
+    'observation_config': {'type': 'drift_real_vref', 'frenet_reference': 'raceline'},
+    'raceline_vx_n_points': 15,  # Number of velocity samples (default: 15)
+    'raceline_vx_ds': 0.4,  # Spacing between samples in meters (default: 0.4m)
+}
+```
+
 ### Collision and Safety
 ```python
 config = {

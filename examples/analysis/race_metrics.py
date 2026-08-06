@@ -32,13 +32,13 @@ from examples.controllers import TARGET_SPEED, create_controller
 from train.config.env_config import get_env_id
 from train.train_utils import get_output_dirs, print_header
 
-CONTROLLER_TYPE = "learned"
-RUN_ID = "178a1a5l"
-DESC = "drift model - CW & CCW on Drift_large, with `sparse_width_obs` = True"
+# CONTROLLER_TYPE = "learned"
+# RUN_ID = "178a1a5l"
+# DESC = "drift model - CW & CCW on Drift_large, with `sparse_width_obs` = True"
 
-# CONTROLLER_TYPE = "stanley"
-# DESC = "stanley"
-# RUN_ID = ""
+CONTROLLER_TYPE = "stanley"
+DESC = "stanley"
+RUN_ID = ""
 
 MAP = "Drift"
 N_LAPS = 10
@@ -95,6 +95,7 @@ def collect_lap_times(env, controller, n_laps, render=False):
     Returns:
         lap_times: list of lap durations in seconds.
         resets: number of episode terminations (off-track) or truncations along the way.
+        peaks: dict of per-run maxima (v_x, v_y, |beta|) over timed laps only.
     """
     dt = env.unwrapped.timestep
     track_length = env.unwrapped.track.centerline.spline.s[-1]
@@ -110,12 +111,20 @@ def collect_lap_times(env, controller, n_laps, render=False):
     armed = False
     lap_start_step = None  # stays None until the first wrap arms the timer
 
+    # Per-step [v_x, v_y, beta] for the lap in progress, committed to `timed_states` only once
+    # the lap is banked. Keeps the out-lap and any crashed partial lap out of the maxima.
+    lap_states = []
+    timed_states = []
+
     while len(lap_times) < n_laps:
         action = controller.get_action(obs)
         obs, _, done, trunc, _ = env.step(action)
         if render:
             env.render()
         step += 1
+
+        st = env.unwrapped.sim.agents[AGENT_IDX].standard_state
+        lap_states.append((st["v_x"], st["v_y"], st["slip"]))
 
         s = env.unwrapped._frenet_cache[AGENT_IDX, 0]
 
@@ -127,8 +136,10 @@ def collect_lap_times(env, controller, n_laps, render=False):
         elif armed and s_prev > 0.75 * track_length and s < 0.25 * track_length:
             if lap_start_step is not None:
                 lap_times.append((step - lap_start_step) * dt)
+                timed_states.extend(lap_states)
                 print(f"  Lap {len(lap_times)}/{n_laps}: {lap_times[-1]:.3f} s")
             lap_start_step, armed = step, False
+            lap_states = []
         s_prev = s
 
         if done or trunc:
@@ -143,11 +154,18 @@ def collect_lap_times(env, controller, n_laps, render=False):
             controller.on_reset(obs)
             s_prev = env.unwrapped._frenet_cache[AGENT_IDX, 0]
             lap_start_step, armed = None, False
+            lap_states = []
 
-    return lap_times, resets
+    states = np.asarray(timed_states)
+    peaks = {
+        "max_vx": float(np.max(states[:, 0])),
+        "max_vy": float(np.max(np.abs(states[:, 1]))),
+        "max_beta": float(np.max(np.abs(states[:, 2]))),
+    }
+    return lap_times, resets, peaks
 
 
-def save_metrics(lap_times, resets, output_path, controller_label="", map_name="", desc=""):
+def save_metrics(lap_times, resets, peaks, output_path, controller_label="", map_name="", desc=""):
     """Format, print, and save lap-time metrics to a file."""
     lap_times = np.asarray(lap_times)
     bar = "=" * 50
@@ -166,6 +184,10 @@ def save_metrics(lap_times, resets, output_path, controller_label="", map_name="
         "",
         f"Average lap time: {np.mean(lap_times):.3f} s (std: {np.std(lap_times):.3f} s)",
         f"Best lap time:    {np.min(lap_times):.3f} s",
+        "",
+        f"Max v_x (longitudinal):  {peaks['max_vx']:.3f} m/s",
+        f"Max |v_y| (lateral):     {peaks['max_vy']:.3f} m/s",
+        f"Max |beta| (sideslip):   {peaks['max_beta']:.4f} rad ({np.rad2deg(peaks['max_beta']):.2f} deg)",
         bar,
     ]
 
@@ -222,12 +244,13 @@ def main():
     np.random.seed(SEED)
 
     print(f"\nRunning {args.laps} laps...")
-    lap_times, resets = collect_lap_times(env, controller, args.laps, render=args.render)
+    lap_times, resets, peaks = collect_lap_times(env, controller, args.laps, render=args.render)
     env.close()
 
     save_metrics(
         lap_times,
         resets,
+        peaks,
         os.path.join(subfolder, "metrics.txt"),
         controller_label=controller_type + (f" ({run_id})" if controller_type == "learned" else ""),
         map_name=map_name,

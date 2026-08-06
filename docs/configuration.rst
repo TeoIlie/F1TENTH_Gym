@@ -113,6 +113,27 @@ Observation configuration
        'normalize_obs': True,                     # Enable observation normalization (only 'drift' obs)
    }
 
+Raceline velocity reference
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``drift_real_vref`` observation type appends ``raceline_vxs``: the raceline's
+precomputed velocity profile (the ``vx_mps`` column of ``<map>_raceline.csv``) sampled
+ahead of the vehicle, in m/s. Sampling starts at the vehicle's own arc length and is
+indexed along the **raceline**, so it requires ``frenet_reference: 'raceline'`` and a map
+that ships a raceline.
+
+.. code:: python
+
+   config = {
+       'observation_config': {'type': 'drift_real_vref', 'frenet_reference': 'raceline'},
+       'raceline_vx_n_points': 15,   # Number of velocity samples (default: 15)
+       'raceline_vx_ds': 0.4,        # Spacing between samples in meters (default: 0.4m)
+   }
+
+The window is sized independently of ``lookahead_n_points``/``lookahead_ds`` because a
+speed reference needs a longer horizon than curvature: braking must begin several meters
+before the corner it applies to.
+
 See :doc:`api/observation` for details.
 
 Collision and safety

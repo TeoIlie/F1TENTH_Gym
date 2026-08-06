@@ -9,6 +9,7 @@ from gymkhana.envs.observation import (
     observation_factory,
     sample_lookahead_curvatures_fast,
     sample_lookahead_widths_fast,
+    sample_raceline_velocities_fast,
 )
 from gymkhana.envs.utils import deep_update
 from train.config.env_config import get_drift_train_config, get_env_id
@@ -930,5 +931,297 @@ class TestFrenetReference(unittest.TestCase):
             self.assertEqual(centerline_bounds["frenet_n"], (-0.5 * GLOBAL_MAX_WIDTH, 0.5 * GLOBAL_MAX_WIDTH))
             self.assertEqual(raceline_bounds["frenet_n"], (-GLOBAL_MAX_WIDTH, GLOBAL_MAX_WIDTH))
             self.assertEqual(default_bounds["frenet_n"], centerline_bounds["frenet_n"])
+        finally:
+            env.close()
+
+
+class TestRacelineVxsObservation(unittest.TestCase):
+    """Test suite for the raceline_vxs feature and the drift_real_vref observation type.
+
+    raceline_vxs reports the raceline's precomputed velocity profile (the vx_mps column of
+    <map>_raceline.csv) sampled ahead of the car. Unlike the curvature/width lookaheads it is
+    indexed by raceline arc length, so these tests pin that distinction.
+    """
+
+    # drift_real_vref layout: drift_real followed by raceline_vxs, so the leading indices
+    # are identical to drift_real and the velocity window is always the tail.
+    N_DRIFT_REAL_SCALARS = 7
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = get_drift_train_config()
+        cls.config["normalize_obs"] = False
+        cls.config["sparse_width_obs"] = False
+        cls.config["observation_config"] = {"type": "drift_real_vref", "frenet_reference": "raceline"}
+        cls.config["control_input"] = ["accl", "steering_angle"]
+
+    def _make_env(self, overrides=None, **obs_config_overrides):
+        overrides = dict(overrides or {})
+        if obs_config_overrides:
+            overrides["observation_config"] = obs_config_overrides
+        return gym.make(get_env_id(), config=deep_update(self.config, overrides))
+
+    @staticmethod
+    def _step(env):
+        """Step once off the reset pose so the sampled window is not the reset one."""
+        obs, _, _, _, _ = env.step(np.array([[0.1, 0.2]]))
+        return obs
+
+    def test_observation_length_is_drift_real_plus_window(self):
+        """drift_real_vref appends exactly raceline_vx_n_points elements to drift_real."""
+        vref_env = self._make_env()
+        base_env = self._make_env(type="drift_real")
+        try:
+            vref_obs, _ = vref_env.reset(seed=3)
+            base_obs, _ = base_env.reset(seed=3)
+            n = vref_env.unwrapped.raceline_vx_n_points
+
+            self.assertEqual(vref_obs.shape[0], base_obs.shape[0] + n)
+            self.assertEqual(vref_env.observation_space.shape[0], vref_obs.shape[0])
+        finally:
+            vref_env.close()
+            base_env.close()
+
+    def test_leading_features_match_drift_real(self):
+        """Appending the window must not shift any pre-existing drift_real index."""
+        vref_env = self._make_env()
+        base_env = self._make_env(type="drift_real")
+        try:
+            vref_env.reset(seed=7)
+            base_env.reset(seed=7)
+            vref_obs = self._step(vref_env)
+            base_obs = self._step(base_env)
+
+            np.testing.assert_allclose(
+                vref_obs[: base_obs.shape[0]],
+                base_obs,
+                rtol=1e-6,
+                atol=1e-6,
+                err_msg="drift_real_vref must be drift_real with the window appended, not interleaved",
+            )
+        finally:
+            vref_env.close()
+            base_env.close()
+
+    def test_window_matches_direct_sampler(self):
+        """The observation tail equals the sampler called with the raceline arc length."""
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            obs = self._step(env)
+            unwrapped = env.unwrapped
+            n = unwrapped.raceline_vx_n_points
+
+            std_state = unwrapped.sim.agents[0].standard_state
+            s_raceline, _, _ = unwrapped.track.cartesian_to_frenet(
+                std_state["x"], std_state["y"], std_state["yaw"], use_raceline=True
+            )
+            expected = sample_raceline_velocities_fast(
+                unwrapped.track, s_raceline, n_points=n, ds=unwrapped.raceline_vx_ds
+            )
+            np.testing.assert_array_almost_equal(obs[-n:], expected, decimal=5)
+        finally:
+            env.close()
+
+    def test_window_is_fresh_at_reset(self):
+        """The raceline cache is populated before the first observe(), not one step behind."""
+        env = self._make_env()
+        try:
+            unwrapped = env.unwrapped
+            n = unwrapped.raceline_vx_n_points
+            for seed in (1, 2, 3):
+                obs, _ = env.reset(seed=seed)
+                std_state = unwrapped.sim.agents[0].standard_state
+                s_pose, _, _ = unwrapped.track.cartesian_to_frenet(
+                    std_state["x"], std_state["y"], std_state["yaw"], use_raceline=True
+                )
+                expected = sample_raceline_velocities_fast(
+                    unwrapped.track, s_pose, n_points=n, ds=unwrapped.raceline_vx_ds
+                )
+                np.testing.assert_array_almost_equal(obs[-n:], expected, decimal=5)
+        finally:
+            env.close()
+
+    def test_normalized_arc_length_raceline_rejected(self):
+        """ss in a [0,1] parameterization would break the wrap-around, so it must fail loudly."""
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            track = env.unwrapped.track
+            raceline = track.raceline
+            original_ss = raceline.ss
+            try:
+                raceline.ss = np.linspace(0.0, 1.0, len(original_ss), dtype=np.float32)
+                with self.assertRaises(ValueError) as ctx:
+                    sample_raceline_velocities_fast(track, 0.0, n_points=3, ds=0.4)
+                self.assertIn("normalized", str(ctx.exception))
+            finally:
+                raceline.ss = original_ss
+        finally:
+            env.close()
+
+    def test_window_is_indexed_by_raceline_not_centerline_s(self):
+        """Sampling at the centerline s must give a different window (the classic wiring bug).
+
+        Drift's centerline is ~24.6 m and its raceline ~22.8 m, so the same numeric s lands on
+        different parts of the two lines.
+        """
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            obs = self._step(env)
+            unwrapped = env.unwrapped
+            n = unwrapped.raceline_vx_n_points
+            ds = unwrapped.raceline_vx_ds
+
+            s_centerline = float(unwrapped._frenet_cache[0, 0])
+            s_raceline = float(unwrapped._frenet_cache_raceline[0, 0])
+            self.assertNotAlmostEqual(
+                s_centerline, s_raceline, places=3, msg="Arc lengths coincide here; test is vacuous"
+            )
+
+            wrong = sample_raceline_velocities_fast(unwrapped.track, s_centerline, n_points=n, ds=ds)
+            self.assertFalse(
+                np.allclose(obs[-n:], wrong),
+                "raceline_vxs appears to be sampled at the centerline arc length",
+            )
+        finally:
+            env.close()
+
+    def test_window_values_lie_on_the_raceline_profile(self):
+        """Every sampled value is drawn from the map's actual velocity profile."""
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            obs = self._step(env)
+            unwrapped = env.unwrapped
+            n = unwrapped.raceline_vx_n_points
+            vxs = np.asarray(unwrapped.track.raceline.vxs, dtype=np.float64)
+            window = obs[-n:]
+
+            self.assertTrue(np.all(window >= vxs.min() - 1e-5))
+            self.assertTrue(np.all(window <= vxs.max() + 1e-5))
+            # Nearest-neighbour sampling, so each value must be an actual waypoint velocity.
+            for v in window:
+                self.assertTrue(np.any(np.isclose(vxs, v, atol=1e-4)), f"{v} is not a raceline waypoint velocity")
+            # A constant window would mean the profile is not really being read.
+            self.assertGreater(np.ptp(window), 0.0, "Velocity window is constant; profile likely not loaded")
+        finally:
+            env.close()
+
+    def test_first_element_is_velocity_at_current_position(self):
+        """Offset 0 (not ds) so the controller gets the reference at its own arc length."""
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            self._step(env)
+            unwrapped = env.unwrapped
+            raceline = unwrapped.track.raceline
+            s = float(unwrapped._frenet_cache_raceline[0, 0])
+
+            window = sample_raceline_velocities_fast(unwrapped.track, s, n_points=3, ds=unwrapped.raceline_vx_ds)
+            nearest = int(np.argmin(np.abs(np.asarray(raceline.ss, dtype=np.float64) - s)))
+            self.assertAlmostEqual(float(window[0]), float(raceline.vxs[nearest]), places=5)
+        finally:
+            env.close()
+
+    def test_sampler_wraps_around_end_of_line(self):
+        """A window straddling the end of a closed raceline continues from the start."""
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            track = env.unwrapped.track
+            raceline = track.raceline
+            length = float(raceline.ss[-1])
+            ds = 0.4
+            n = 5
+
+            # s == length wraps to 0, so the whole window must equal the window sampled from 0.
+            at_end = sample_raceline_velocities_fast(track, length, n_points=n, ds=ds)
+            from_start = sample_raceline_velocities_fast(track, 0.0, n_points=n, ds=ds)
+            np.testing.assert_allclose(at_end, from_start, rtol=0, atol=1e-4)
+
+            # A window straddling the end stays in range and picks up early-line values.
+            straddling = sample_raceline_velocities_fast(track, length - ds / 2, n_points=n, ds=ds)
+            self.assertEqual(straddling.shape, (n,))
+            self.assertTrue(np.all(np.isfinite(straddling)))
+            vxs = np.asarray(raceline.vxs, dtype=np.float64)
+            for v in straddling:
+                self.assertTrue(np.any(np.isclose(vxs, v, atol=1e-4)))
+        finally:
+            env.close()
+
+    def test_requires_raceline_frenet_reference(self):
+        """The feature fails loudly rather than silently reading a stale zero cache."""
+        for reference in ("centerline", None):
+            with self.subTest(frenet_reference=reference):
+                obs_config = {"type": "drift_real_vref"}
+                if reference is not None:
+                    obs_config["frenet_reference"] = reference
+                # Replace observation_config wholesale: deep_update *merges* nested dicts, so it
+                # cannot express "frenet_reference absent" against a base that sets it.
+                config = deep_update(self.config, {})
+                config["observation_config"] = obs_config
+                with self.assertRaises(ValueError) as ctx:
+                    gym.make(get_env_id(), config=config)
+                self.assertIn("raceline_vxs", str(ctx.exception))
+
+    def test_missing_raceline_raises(self):
+        """A map with no raceline must fail, not fall back to the centerline's constant vxs."""
+        from gymkhana.envs.track import Track
+
+        source = Track.from_track_name(self.config["map"])
+        no_raceline = Track(
+            spec=source.spec,
+            occupancy_map=source.occupancy_map,
+            filepath=source.filepath,
+            ext=source.ext,
+            centerline=source.centerline_regular,
+            raceline=None,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            self._make_env(overrides={"map": no_raceline})
+        self.assertIn("raceline", str(ctx.exception))
+
+    def test_window_respects_config_keys(self):
+        """raceline_vx_n_points / raceline_vx_ds size and space the window."""
+        env = self._make_env(overrides={"raceline_vx_n_points": 4, "raceline_vx_ds": 1.0})
+        try:
+            obs, _ = env.reset(seed=3)
+            unwrapped = env.unwrapped
+            self.assertEqual(unwrapped.raceline_vx_n_points, 4)
+            self.assertEqual(obs[-4:].shape, (4,))
+
+            expected = sample_raceline_velocities_fast(
+                unwrapped.track, float(unwrapped._frenet_cache_raceline[0, 0]), n_points=4, ds=1.0
+            )
+            np.testing.assert_array_almost_equal(obs[-4:], expected, decimal=5)
+        finally:
+            env.close()
+
+    def test_invalid_config_keys_raise(self):
+        """Degenerate window settings fail at construction."""
+        with self.assertRaises(ValueError):
+            self._make_env(overrides={"raceline_vx_n_points": 0})
+        with self.assertRaises(ValueError):
+            self._make_env(overrides={"raceline_vx_ds": 0.0})
+
+    def test_normalization_uses_velocity_bounds(self):
+        """raceline_vxs shares linear_vel_x's bound so errors between them are meaningful."""
+        from gymkhana.envs.utils import calculate_norm_bounds
+
+        env = self._make_env(overrides={"normalize_obs": True})
+        try:
+            obs, _ = env.reset(seed=3)
+            unwrapped = env.unwrapped
+            self.assertTrue(unwrapped.normalize_obs, "drift_real_vref must support normalization")
+
+            bounds = calculate_norm_bounds(unwrapped, ["linear_vel_x", "raceline_vxs"], frenet_reference="raceline")
+            self.assertEqual(bounds["raceline_vxs"], bounds["linear_vel_x"])
+            self.assertEqual(bounds["raceline_vxs"], (unwrapped.params["v_min"], unwrapped.params["v_max"]))
+
+            n = unwrapped.raceline_vx_n_points
+            self.assertTrue(np.all(np.abs(obs[-n:]) <= 1.0), "Normalized window must lie within [-1, 1]")
+            self.assertTrue(env.observation_space.contains(obs))
         finally:
             env.close()

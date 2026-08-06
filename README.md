@@ -246,16 +246,19 @@ Works with all observation types (`OriginalObservation`, `FeaturesObservation`, 
     1. `lookahead_n_points` - Number of lookahead points (default: 10)
     2. `lookahead_ds` - Spacing between points in meters (default: 0.3m)
     3. `sparse_width_obs` - `False` passes all lookahead point width values as observation, `True` only passes 1st and last. `True` is useful when track width varies very little (default: `False`)
-6. Set `normalize_obs` to `True/False` for normalizing the observation space. Only specific observation types can be normalized
-7. Set `normalize_act` to `True/False` for normalizing the action space. Supported for all action types
-8. Set `predictive_collision` to `True` to use TTC collision checking and `False` for Frenet-based collision checking. Note that this also modifies the reward function.
-9. Set `wall_deflection` to `False` to treat track edges as boundaries, and `True` to treat them as walls that cause a collision and halt the vehicle
-10. Reward configuration options:
+6. The `drift_real_vref` observation type appends `raceline_vxs`, the raceline's precomputed velocity profile (the `vx_mps` column of `<map>_raceline.csv`) sampled ahead of the car in m/s. Sampling starts at the car's own arc length and is indexed along the raceline, so it requires `observation_config` to also set `'frenet_reference': 'raceline'` on a map that ships a raceline. Its window is sized separately from the curvature lookahead, since a speed reference needs a longer horizon to brake against
+    1. `raceline_vx_n_points` - Number of velocity samples (default: 15)
+    2. `raceline_vx_ds` - Spacing between samples in meters (default: 0.4m)
+7. Set `normalize_obs` to `True/False` for normalizing the observation space. Only specific observation types can be normalized
+8. Set `normalize_act` to `True/False` for normalizing the action space. Supported for all action types
+9. Set `predictive_collision` to `True` to use TTC collision checking and `False` for Frenet-based collision checking. Note that this also modifies the reward function.
+10. Set `wall_deflection` to `False` to treat track edges as boundaries, and `True` to treat them as walls that cause a collision and halt the vehicle
+11. Reward configuration options:
     1. `progress_gain`: set amount of gain by which to multiply forward progress reward. Must be >= 1
     2. `out_of_bounds_penalty`: penalty for driving off the track boundary
     3. `negative_vel_penalty`: penalty for driving backward
     4. `max_episode_steps`: the maximum number of episode steps
-11. Set `track_direction` to define in which direction to drive around the track:
+12. Set `track_direction` to define in which direction to drive around the track:
     1. `normal` (default): drive around the track in the direction of the waypoints stored in the centerline and raceline files (Note this may be CW or CCW depending on the track map)
     2. `reverse`: drive around in the opposite direction (For ex, CW instead of CCW)
     3. `random`: randomly drive in the 'regular' or 'reverse' direction at each reset with a 50% chance, to learn left and right cornering equally when training a policy with RL
