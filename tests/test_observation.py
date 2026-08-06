@@ -757,3 +757,178 @@ class TestCurrCmdOptInFeatures(unittest.TestCase):
             self.assertAlmostEqual(obs[1], throttle_cmd, places=5, msg="curr_throttle_cmd mismatch")
         finally:
             env.close()
+
+
+class TestFrenetReference(unittest.TestCase):
+    """Test suite for the frenet_reference observation option (centerline vs raceline).
+
+    v1 scope: only frenet_u and frenet_n follow the reference line. Lookahead curvatures
+    and widths stay centerline-based under both references — see test_lookahead_features_
+    unaffected_by_reference, which must be updated deliberately if that ever changes.
+    """
+
+    # drift_real layout: [vx, vy, frenet_u, frenet_n, r, beta, omega, curvatures..., widths...]
+    FRENET_U_I = 2
+    FRENET_N_I = 3
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = get_drift_train_config()
+        cls.config["normalize_obs"] = False
+        cls.config["sparse_width_obs"] = False
+        cls.config["observation_config"] = {"type": "drift_real"}
+        cls.config["control_input"] = ["accl", "steering_angle"]
+
+    def _make_env(self, frenet_reference=None, map=None):
+        """Build an env, omitting frenet_reference entirely when None (default-path coverage)."""
+        # Overrides go through deep_update so nested dicts are rebuilt; editing
+        # config["observation_config"] in place would leak into cls.config and later tests.
+        overrides = {}
+        if frenet_reference is not None:
+            overrides["observation_config"] = {"frenet_reference": frenet_reference}
+        if map is not None:
+            overrides["map"] = map
+        return gym.make(get_env_id(), config=deep_update(self.config, overrides))
+
+    @staticmethod
+    def _step(env):
+        """Step once off the reset pose so the Frenet errors are non-trivial."""
+        obs, _, _, _, _ = env.step(np.array([[0.1, 0.2]]))
+        return obs
+
+    def test_default_is_centerline(self):
+        """Omitting frenet_reference keeps the pre-existing centerline behaviour."""
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            self.assertEqual(env.unwrapped.observation_type.frenet_reference, "centerline")
+            self.assertFalse(env.unwrapped._use_raceline_frenet, "Raceline projection must stay off by default")
+
+            obs = self._step(env)
+            std_state = env.unwrapped.sim.agents[0].standard_state
+            _, ey, ephi = env.unwrapped.track.cartesian_to_frenet(
+                std_state["x"], std_state["y"], std_state["yaw"], use_raceline=False
+            )
+            self.assertAlmostEqual(obs[self.FRENET_U_I], ephi, places=5, msg="frenet_u should be centerline ephi")
+            self.assertAlmostEqual(obs[self.FRENET_N_I], ey, places=5, msg="frenet_n should be centerline ey")
+        finally:
+            env.close()
+
+    def test_raceline_reference_matches_raceline_projection(self):
+        """frenet_u/frenet_n come from the raceline projection, and differ from the centerline."""
+        env = self._make_env("raceline")
+        try:
+            env.reset(seed=3)
+            self.assertTrue(env.unwrapped._use_raceline_frenet)
+
+            obs = self._step(env)
+            std_state = env.unwrapped.sim.agents[0].standard_state
+            x, y, theta = std_state["x"], std_state["y"], std_state["yaw"]
+            track = env.unwrapped.track
+
+            _, ey_race, ephi_race = track.cartesian_to_frenet(x, y, theta, use_raceline=True)
+            self.assertAlmostEqual(obs[self.FRENET_U_I], ephi_race, places=5, msg="frenet_u should be raceline ephi")
+            self.assertAlmostEqual(obs[self.FRENET_N_I], ey_race, places=5, msg="frenet_n should be raceline ey")
+
+            # The two references must actually disagree, else the test proves nothing.
+            _, ey_center, _ = track.cartesian_to_frenet(x, y, theta, use_raceline=False)
+            self.assertNotAlmostEqual(
+                ey_race, ey_center, places=3, msg="Raceline and centerline ey coincide; test is vacuous"
+            )
+        finally:
+            env.close()
+
+    def test_raceline_cache_untouched_when_disabled(self):
+        """The raceline projection is skipped entirely under the centerline reference."""
+        env = self._make_env("centerline")
+        try:
+            env.reset(seed=3)
+            self._step(env)
+            cache = env.unwrapped._frenet_cache_raceline
+            self.assertTrue(
+                np.array_equal(cache, np.zeros_like(cache)),
+                "_frenet_cache_raceline must stay zeros when frenet_reference='centerline'",
+            )
+        finally:
+            env.close()
+
+    def test_lookahead_features_unaffected_by_reference(self):
+        """v1 invariant: lookahead curvatures and widths remain centerline-sampled."""
+        observations = {}
+        for reference in ("centerline", "raceline"):
+            env = self._make_env(reference)
+            try:
+                env.reset(seed=5)
+                observations[reference] = self._step(env)
+            finally:
+                env.close()
+
+        # Assert on everything outside frenet_u/frenet_n rather than a hardcoded lookahead
+        # offset, so the invariant survives changes to the drift_real feature list.
+        frenet_slice = slice(self.FRENET_U_I, self.FRENET_N_I + 1)
+        others = np.ones(observations["centerline"].shape, dtype=bool)
+        others[frenet_slice] = False
+        np.testing.assert_array_equal(
+            observations["centerline"][others],
+            observations["raceline"][others],
+            err_msg="Only frenet_u/frenet_n may differ across references in v1",
+        )
+        self.assertFalse(
+            np.allclose(observations["centerline"][frenet_slice], observations["raceline"][frenet_slice]),
+            "frenet_u/frenet_n should differ across references",
+        )
+
+    def test_observation_length_unchanged(self):
+        """The reference line does not change the observation vector layout."""
+        lengths = {}
+        for reference in ("centerline", "raceline"):
+            env = self._make_env(reference)
+            try:
+                obs, _ = env.reset(seed=5)
+                lengths[reference] = (obs.shape[0], env.observation_space.shape[0])
+            finally:
+                env.close()
+        self.assertEqual(lengths["centerline"], lengths["raceline"])
+
+    def test_invalid_reference_raises(self):
+        """An unrecognised reference fails loudly at construction."""
+        with self.assertRaises(ValueError) as ctx:
+            self._make_env("middle")
+        self.assertIn("frenet_reference", str(ctx.exception))
+
+    def test_missing_raceline_raises(self):
+        """Requesting the raceline on a track that has none fails instead of silently aliasing."""
+        from gymkhana.envs.track import Track
+
+        source = Track.from_track_name(self.config["map"])
+        # Track.__init__ aliases raceline -> centerline when raceline is None, which would make
+        # frenet_reference="raceline" a silent no-op.
+        no_raceline = Track(
+            spec=source.spec,
+            occupancy_map=source.occupancy_map,
+            filepath=source.filepath,
+            ext=source.ext,
+            centerline=source.centerline_regular,
+            raceline=None,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            self._make_env("raceline", map=no_raceline)
+        self.assertIn("raceline", str(ctx.exception))
+
+    def test_frenet_n_norm_bounds_widen_for_raceline(self):
+        """The raceline reference widens the frenet_n bound to the full track width."""
+        from gymkhana.envs.utils import GLOBAL_MAX_WIDTH, calculate_norm_bounds
+
+        env = self._make_env()
+        try:
+            env.reset(seed=3)
+            unwrapped = env.unwrapped
+            centerline_bounds = calculate_norm_bounds(unwrapped, ["frenet_n"], frenet_reference="centerline")
+            raceline_bounds = calculate_norm_bounds(unwrapped, ["frenet_n"], frenet_reference="raceline")
+            default_bounds = calculate_norm_bounds(unwrapped, ["frenet_n"])
+
+            self.assertEqual(centerline_bounds["frenet_n"], (-0.5 * GLOBAL_MAX_WIDTH, 0.5 * GLOBAL_MAX_WIDTH))
+            self.assertEqual(raceline_bounds["frenet_n"], (-GLOBAL_MAX_WIDTH, GLOBAL_MAX_WIDTH))
+            self.assertEqual(default_bounds["frenet_n"], centerline_bounds["frenet_n"])
+        finally:
+            env.close()

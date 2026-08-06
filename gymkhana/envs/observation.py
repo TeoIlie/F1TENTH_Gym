@@ -11,6 +11,10 @@ from numba import njit
 
 from gymkhana.envs.utils import calculate_norm_bounds, normalize_feature
 
+# Reference lines frenet_u/frenet_n can be measured against, set per observation via the
+# "frenet_reference" key of observation_config.
+FRENET_REFERENCES = ("centerline", "raceline")
+
 
 def sample_lookahead_curvatures(track, current_s: float, n_points: int, ds: float) -> np.ndarray:
     """Sample curvature values ahead of the vehicle along the centerline.
@@ -667,11 +671,26 @@ class VectorObservation(Observation):
     Args:
         env: The Gymnasium environment instance.
         features: Ordered list of feature names to concatenate.
+        frenet_reference: Line ``frenet_u`` / ``frenet_n`` are measured against —
+            ``"centerline"`` (default) or ``"raceline"``. ``lookahead_curvatures``
+            and ``lookahead_widths`` stay centerline-sampled either way.
+
+    Note:
+        ``"raceline"`` only works for the observation held by the env as
+        ``observation_type``: ``GKEnv`` populates the raceline Frenet cache solely for
+        that instance. A ``VectorObservation`` constructed directly on a live env would
+        read a stale, all-zero cache.
     """
 
-    def __init__(self, env, features: List[str]):
+    def __init__(self, env, features: List[str], frenet_reference: str = "centerline"):
         super().__init__(env)
         self.features = features
+
+        if frenet_reference not in FRENET_REFERENCES:
+            raise ValueError(
+                f"Invalid frenet_reference {frenet_reference!r}. Must be one of: {list(FRENET_REFERENCES)}."
+            )
+        self.frenet_reference = frenet_reference
 
         # integrated_vel_cmd is only meaningful under accl control; under speed mode it's a
         # redundant low-pass of the user's speed command.
@@ -687,7 +706,7 @@ class VectorObservation(Observation):
         self.bounds = {}
         self.normalize_obs = self.env.unwrapped.normalize_obs
         if self.normalize_obs:
-            self.bounds = calculate_norm_bounds(self.env.unwrapped, self.features)
+            self.bounds = calculate_norm_bounds(self.env.unwrapped, self.features, frenet_reference=frenet_reference)
 
     def space(self):
         scan_size = self.env.unwrapped.sim.agents[0].scan_simulator.num_beams
@@ -773,11 +792,18 @@ class VectorObservation(Observation):
         if track is not None and getattr(track, "centerline", None) is not None:
             try:
                 # Read from GKEnv._frenet_cache populated each step. Index [0] is single-agent (asserted in space()).
+                # s stays centerline-based: the lookahead samplers below are, and
+                # s_raceline != s_centerline would sample the wrong part of the track.
                 cache = self.env.unwrapped._frenet_cache
-                s, ey, ephi = float(cache[0, 0]), float(cache[0, 1]), float(cache[0, 2])
+                s = float(cache[0, 0])
 
-                frenet_u = ephi  # heading error (vehicle heading - track heading)
-                frenet_n = ey  # lateral distance from centerline (left=-ve, right=+ve)
+                # Only the Frenet errors follow the reference line, not the lookahead features.
+                if self.frenet_reference == "raceline":
+                    cache = self.env.unwrapped._frenet_cache_raceline
+                ey, ephi = float(cache[0, 1]), float(cache[0, 2])
+
+                frenet_u = ephi  # heading error (vehicle heading - reference line heading)
+                frenet_n = ey  # lateral distance from the reference line (left=-ve, right=+ve)
 
                 lookahead_curvatures = sample_lookahead_curvatures_fast(track, s, n_points=n_lookahead, ds=ds_lookahead)
                 lookahead_widths = sample_lookahead_widths_fast(track, s, n_points=n_lookahead, ds=ds_lookahead)
@@ -845,7 +871,8 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
             ``"dynamic_state"``, ``"frenet_dynamic_state"``, ``"rl"``,
             ``"drift"``, ``"drift_real"``, ``"frenet"``, ``"race"``, ``"drift_st"``.
             Defaults to ``"original"`` if None.
-        **kwargs: Additional arguments forwarded to the observation constructor.
+        **kwargs: Additional arguments forwarded to the observation constructor —
+            ``frenet_reference`` for vector types, ``features`` for ``"features"``.
 
     Returns:
         An :class:`Observation` subclass instance.
@@ -890,13 +917,13 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
         features = [
             "scan",
         ]
-        return VectorObservation(env, features=features)
+        return VectorObservation(env, features=features, **kwargs)
     elif type == "drift":
         features = [
             "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
             "linear_vel_y",  # vy - lateral velocity, vehicle frame
             "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
-            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "frenet_n",  # n - lateral distance from the reference line, in Frenet coords
             "ang_vel_z",  # r - yaw rate
             "delta",  # δ - measured steering angle
             "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
@@ -907,45 +934,45 @@ def observation_factory(env, type: str | None, **kwargs) -> Observation:
             "lookahead_curvatures",  # c - track curvatures
             "lookahead_widths",  # w - track widths
         ]
-        return VectorObservation(env, features=features)
+        return VectorObservation(env, features=features, **kwargs)
     elif type == "drift_real":
         features = [
             "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
             "linear_vel_y",  # vy - lateral velocity, vehicle frame
             "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
-            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "frenet_n",  # n - lateral distance from the reference line, in Frenet coords
             "ang_vel_z",  # r - yaw rate
             "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
             "curr_avg_wheel_omega",  # ω - current measured wheel speed
             "lookahead_curvatures",  # c - track curvatures
             "lookahead_widths",  # w - track widths
         ]
-        return VectorObservation(env, features=features)
+        return VectorObservation(env, features=features, **kwargs)
     elif type == "drift_st":
         features = [
             "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
             "linear_vel_y",  # vy - lateral velocity, vehicle frame
             "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
-            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "frenet_n",  # n - lateral distance from the reference line, in Frenet coords
             "ang_vel_z",  # r - yaw rate
             "beta",  # β - slip angle (vehicle velocity angle relative to body axis)
             "prev_steering_cmd",  # δ_ref - previous commanded steering angle
             "lookahead_curvatures",  # c - track curvatures
             "lookahead_widths",  # w - track widths
         ]
-        return VectorObservation(env, features=features)
+        return VectorObservation(env, features=features, **kwargs)
     elif type == "frenet":
         features = ["frenet_u", "frenet_n"]
-        return VectorObservation(env, features=features)
+        return VectorObservation(env, features=features, **kwargs)
     elif type == "race":
         features = [
             "linear_vel_x",  # vx - longitudinal velocity, vehicle frame
             "linear_vel_y",  # vy - lateral velocity, vehicle frame
             "frenet_u",  # u - angle between car heading, track heading, in Frenet coords
-            "frenet_n",  # n - lateral distance from centerline, in Frenet coords
+            "frenet_n",  # n - lateral distance from the reference line, in Frenet coords
             "ang_vel_z",  # r - yaw rate
             "lookahead_curvatures",  # c - track curvatures
         ]
-        return VectorObservation(env, features=features)
+        return VectorObservation(env, features=features, **kwargs)
     else:
         raise ValueError(f"Invalid observation type {type}.")

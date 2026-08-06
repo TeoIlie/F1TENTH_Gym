@@ -1,5 +1,5 @@
 """
-Simple PD-like Controller for Centerline Tracking
+Simple path-tracking controllers: PD on the centerline, Stanley on the raceline
 """
 
 from typing import Any
@@ -18,9 +18,10 @@ BETA_GAIN = 1.0  # Sideslip angle gain
 R_GAIN = 0.5  # Yaw rate gain
 
 # Stanley controller constants
-K_STANLEY = 0.1  # Cross-track gain
+K_STANLEY = 1.0  # Cross-track gain
 K_SOFT_STANLEY = 0.1  # Velocity softening constant [m/s]
-K_HEADING_STANLEY = 1.0  # Heading error gain
+K_HEADING_STANLEY = 2.0  # Heading error gain
+STANLEY_FRENET_REFERENCE = "raceline"  # Stanley tracks the raceline; the PD controllers track the centerline
 
 TARGET_SPEED = 2.0  # m/s
 
@@ -86,6 +87,7 @@ class PDStabilityController(Controller):
             Kbeta: Gain for sideslip angle correction
             Kr: Gain for yaw rate correction
             target_speed: Constant target speed [m/s]
+            map: Map name for environment configuration
         """
         self.Kbeta = Kbeta
         self.Kr = Kr
@@ -156,7 +158,7 @@ class StanleyController(Controller):
         return action
 
     def get_env_config(self) -> dict[str, Any]:
-        return get_config(map=self.map)
+        return get_config(map=self.map, frenet_reference=STANLEY_FRENET_REFERENCE)
 
     def compute_steering(self, vx: float, heading_error: float, cross_track_error: float) -> float:
         """
@@ -174,14 +176,23 @@ class StanleyController(Controller):
         return steering_angle
 
 
-def get_config(obs_type=OBS_TYPE, lookahead_n_points=LOOKAHEAD_N_POINTS, lookahead_ds=LOOKAHEAD_DS, map="Drift"):
+def get_config(
+    obs_type=OBS_TYPE,
+    lookahead_n_points=LOOKAHEAD_N_POINTS,
+    lookahead_ds=LOOKAHEAD_DS,
+    map="Drift",
+    frenet_reference="centerline",
+):
     """
     Helper function to create steering controlelrs
+
+    frenet_reference selects the path to track by setting which line frenet_u/frenet_n are
+    measured against. "raceline" requires a map that ships a <map>_raceline.csv.
     """
     config = get_drift_test_config()
     config["map"] = map
     config["control_input"] = ["speed", "steering_angle"]
-    config["observation_config"] = {"type": obs_type}
+    config["observation_config"] = {"type": obs_type, "frenet_reference": frenet_reference}
     config["normalize_act"] = False
     config["normalize_obs"] = False
     config["predictive_collision"] = False
