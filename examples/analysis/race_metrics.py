@@ -45,6 +45,7 @@ DESC = "drift model - CW & CCW on track pool of [Drift_large, Drift_large_mirror
 # RUN_ID = ""
 
 MAP = "Drift_mirror"
+TRACK_DIRECTION = "normal"
 N_LAPS = 10
 SEED = 42
 
@@ -62,7 +63,7 @@ MAX_EPISODE_STEPS = 100_000
 AGENT_IDX = 0
 
 
-def build_env(controller, map_name, render=False):
+def build_env(controller, map_name, track_direction, render=False):
     """Create the eval env for a controller, with racing-specific config overrides.
 
     ``render_mode`` must be set here, at construction: with ``render_mode=None`` a later
@@ -71,7 +72,7 @@ def build_env(controller, map_name, render=False):
     config = controller.get_env_config()
     config["map"] = map_name
     config["max_episode_steps"] = MAX_EPISODE_STEPS
-    config["track_direction"] = "normal"  # test config defaults to "random", re-rolled every reset
+    config["track_direction"] = track_direction
 
     env = gym.make(get_env_id(), config=config, render_mode="human" if render else None)
     controller.initialize(env)
@@ -169,7 +170,7 @@ def collect_lap_times(env, controller, n_laps, render=False):
     return lap_times, resets, peaks
 
 
-def save_metrics(lap_times, resets, peaks, output_path, controller_label="", map_name="", desc=""):
+def save_metrics(lap_times, resets, peaks, output_path, controller_label="", map_name="", track_direction="", desc=""):
     """Format, print, and save lap-time metrics to a file."""
     lap_times = np.asarray(lap_times)
     bar = "=" * 50
@@ -181,6 +182,7 @@ def save_metrics(lap_times, resets, peaks, output_path, controller_label="", map
         bar,
         f"Controller: {controller_label}",
         f"Map: {map_name}",
+        f"Track direction: {track_direction}",
         f"Laps timed: {len(lap_times)}",
         f"Resets (off-track / truncation): {resets}",
         "",
@@ -214,6 +216,7 @@ def parse_args():
     parser.add_argument("--desc", default=None, help="Short description of the model")
     parser.add_argument("--laps", type=int, default=N_LAPS, help="Number of laps to time")
     parser.add_argument("--map", default=MAP, help="Map name")
+    parser.add_argument("--track_direction", default=TRACK_DIRECTION, help="Map name")
     parser.add_argument("--render", action="store_true", help="Open a render window to watch the run")
     return parser.parse_args()
 
@@ -223,6 +226,7 @@ def main():
     controller_type = args.controller_type
     run_id = args.run_id
     map_name = args.map
+    track_direction = args.track_direction
 
     if args.laps < 1:
         raise SystemExit("--laps must be at least 1")
@@ -244,7 +248,7 @@ def main():
     model_path = f"{proj_root}/outputs/downloads/{run_id}/model.zip" if controller_type == "learned" else None
     controller = create_controller(controller_type, model_path=model_path, map=map_name)
 
-    env = build_env(controller, map_name, render=args.render)
+    env = build_env(controller, map_name, track_direction, render=args.render)
     np.random.seed(SEED)
 
     print(f"\nRunning {args.laps} laps...")
@@ -258,6 +262,7 @@ def main():
         os.path.join(subfolder, "metrics.txt"),
         controller_label=controller_type + (f" ({run_id})" if controller_type == "learned" else ""),
         map_name=map_name,
+        track_direction=track_direction,
         desc=desc,
     )
 
