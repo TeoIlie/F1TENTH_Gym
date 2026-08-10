@@ -36,11 +36,15 @@ from train.train_utils import get_output_dirs, print_header
 # RUN_ID = "178a1a5l"
 # DESC = "drift model - CW & CCW on Drift_large, with `sparse_width_obs` = True"
 
-CONTROLLER_TYPE = "stanley"
-DESC = "stanley"
-RUN_ID = ""
+CONTROLLER_TYPE = "learned"
+RUN_ID = "3u6p3rlt"
+DESC = "drift model - CW & CCW on track pool of [Drift_large, Drift_large_mirror], with `sparse_width_obs` = True, and 128 net_arch layer sizes"
 
-MAP = "Drift"
+# CONTROLLER_TYPE = "stanley"
+# DESC = "stanley"
+# RUN_ID = ""
+
+MAP = "Drift_mirror"
 N_LAPS = 10
 SEED = 42
 
